@@ -32,16 +32,16 @@ def parse_arguments():
                            type=int,
                            help='')
     argparser.add_argument('-bn', '--batch_size',
-                           default=4,
+                           default=16,
                            type=int,
                            help='')
     argparser.add_argument('-lr',
                            '--learning_rate',
-                           default=1e-4,
+                           default=1e-3,
                            type=float,
                            help='controls the learning rate for the optimizer')
     argparser.add_argument('--beta1',
-                           default=0.5,
+                           default=0.9,
                            type=float,
                            help='beta1 value for adam')
     argparser.add_argument('--epoch',
@@ -51,9 +51,9 @@ def parse_arguments():
     return argparser.parse_args()
 
 transform = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.ToTensor()
-])
+    transforms.Resize((128, 128)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -68,7 +68,7 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.net = nn.Sequential(
-            nn.ConvTranspose2d(1024, 1024, 4, 1, bias=False), # 4x4x1024
+            nn.ConvTranspose2d(256, 1024, 4, 1, bias=False), # 4x4x1024
             nn.BatchNorm2d(1024),
             nn.ConvTranspose2d(1024, 512, 5, 2, 2, 1, bias=False), # 8x8x512
             nn.BatchNorm2d(512),
@@ -78,9 +78,9 @@ class Generator(nn.Module):
             nn.BatchNorm2d(128),
             nn.ConvTranspose2d(128, 64, 5, 2, 2, 1, bias=False),  # 64x64x64
             nn.BatchNorm2d(64),
-            nn.ConvTranspose2d(64, 32, 5, 2, 2, 1, bias=False),  # 128x128x32
-            nn.BatchNorm2d(32),
-            nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 32x32x512
+            nn.ConvTranspose2d(64, 3, 5, 2, 2, 1, bias=False),  # 128x128x32
+            # nn.BatchNorm2d(32),
+            # nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 256x256x3
             nn.Tanh()
         )
 
@@ -97,26 +97,27 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.net = nn.Sequential(
-            nn.Conv2d(3, 64, 4, 2, 1, bias=False),
+            nn.Conv2d(3, 32, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
-            # 128 x 128 x 64
+            # 64 x 64 x 64
+            nn.Conv2d(32, 64, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2, inplace=True),
+            # 32 x 32 x 128
             nn.Conv2d(64, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2, inplace=True),
-            # 64 x 64 x 128
+            # 16 x 16 x 256
             nn.Conv2d(128, 256, 4, 2, 1, bias=False),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
-            # 32 x 32 x 256
-            nn.Conv2d(256, 512, 4, 2, 1, bias=False),
+            # 8 x 8 x 512
+            nn.Conv2d(256, 512, 4, 4, 1, bias=False),
             nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2, inplace=True),
-            # 16 x 16 x 512
-            nn.Conv2d(512, 1024, 4, 4, 1, bias=False),
-            nn.BatchNorm2d(1024),
-            nn.LeakyReLU(0.2, inplace=True),
-            # 4 x 4 x 1024
-            nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
+            # # 4 x 4 x 1024
+            # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
+            nn.Conv2d(512, 1, 2, 1, 0, bias=False),
             nn.Sigmoid()
         )
 
@@ -151,10 +152,10 @@ def main():
 
     # setup loss computation
     criterion = nn.BCELoss()
-    fixed_noise = torch.randn(args.batch_size, 1024, 1, 1, device=device)
+    fixed_noise = torch.randn(args.batch_size, 256, 1, 1, device=device)
 
-    real_label = 1
-    fake_label = 0
+    real_label = 0
+    fake_label = 1
 
     # setup optimizer
     optim_g = optim.Adam(generator.parameters(), lr=args.learning_rate, betas=(args.beta1, 0.999))
@@ -174,7 +175,7 @@ def main():
             D_x = output.mean().item()
 
             # train fake from generator and discriminator
-            noise = torch.randn(batch_size, 1024, 1, 1, device=device)
+            noise = torch.randn(batch_size, 256, 1, 1, device=device)
             fake = generator(noise)
             label.fill_(fake_label)
             output = discriminator(fake.detach())
