@@ -51,6 +51,13 @@ def parse_arguments():
                            help='epoch for training')
     return argparser.parse_args()
 
+gen_input_size = 128
+randomer = random_generator(min=0.0, max=1.)
+flip_threshold = 0.95
+
+randomer_low = random_generator(min=0.0, max=0.3)
+randomer_high = random_generator(min=0.7, max=1.2)
+
 transform = transforms.Compose([
     transforms.Resize((128, 128)),
     transforms.ToTensor(),
@@ -69,7 +76,7 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.net = nn.Sequential(
-            nn.ConvTranspose2d(256, 1024, 4, 1, bias=False), # 4x4x1024
+            nn.ConvTranspose2d(gen_input_size, 1024, 4, 1, bias=False), # 4x4x1024
             nn.BatchNorm2d(1024),
             nn.ConvTranspose2d(1024, 512, 5, 2, 2, 1, bias=False), # 8x8x512
             nn.BatchNorm2d(512),
@@ -130,6 +137,32 @@ class Discriminator(nn.Module):
             output = self.net(x)
         return output
 
+
+def flip_label(label):
+    """
+    flip the label from 1/0 to 0/1 if the random number > 0.5
+    :param label:
+    :return:
+    """
+    flip_num = randomer.__next__()
+    if flip_num > flip_threshold:
+        return 1 - label
+    else:
+        return label
+
+def generate_soft_labels(label):
+    """
+    generate soft labels depends on the value of the hard labels.
+    if label == 1, the range is (0.7, 1.2),
+    if label == 0, the range is (0.0, 0.3)
+    :param label:
+    :return:
+    """
+    if label == 0:
+        return randomer_low.__next__()
+    elif label == 1:
+        return randomer_high.__next__()
+
 def main():
     args = parse_arguments()
     ngpu = args.ngpu
@@ -153,10 +186,13 @@ def main():
 
     # setup loss computation
     criterion = nn.BCELoss()
-    fixed_noise = torch.randn(args.batch_size, 256, 1, 1, device=device)
+    fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
 
     real_label = 0
     fake_label = 1
+
+    # real_label = flip_label(real_label)
+    # fake_label = flip_label(fake_label)
 
     # setup optimizer
     optim_g = optim.Adam(generator.parameters(), lr=args.learning_rate, betas=(args.beta1, 0.999))
@@ -168,7 +204,7 @@ def main():
             discriminator.zero_grad()
             real_cpu = data[0].to(device)
             batch_size = real_cpu.size(0)
-            label = torch.full((batch_size,), real_label, device=device)
+            label = torch.full((batch_size,), generate_soft_labels(flip_label(real_label)), device=device)
 
             output = discriminator(real_cpu)
             loss_real = criterion(output, label)
@@ -176,9 +212,9 @@ def main():
             D_x = output.mean().item()
 
             # train fake from generator and discriminator
-            noise = torch.randn(batch_size, 256, 1, 1, device=device)
+            noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
             fake = generator(noise)
-            label.fill_(fake_label)
+            label.fill_(generate_soft_labels(flip_label(fake_label)))
             output = discriminator(fake.detach())
             loss_fake = criterion(output, label)
             loss_fake.backward()
@@ -187,7 +223,7 @@ def main():
             optim_d.step()
 
             # update generator
-            label.fill_(real_label)
+            label.fill_(generate_soft_labels(real_label))
             output = discriminator(fake)
             loss_generator = criterion(output, label)
             loss_generator.backward()
