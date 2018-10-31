@@ -19,7 +19,7 @@ import torchvision.utils as vutils
 import pandas
 
 from libs.utilities import Utilities
-from libs.math_utilities import random_generator
+from libs.math_utilities import random_generator, DynamicGaussianNoise
 
 def parse_arguments():
     argparser = argparse.ArgumentParser()
@@ -33,12 +33,12 @@ def parse_arguments():
                            type=int,
                            help='')
     argparser.add_argument('-bn', '--batch_size',
-                           default=16,
+                           default=4,
                            type=int,
                            help='')
     argparser.add_argument('-lr',
                            '--learning_rate',
-                           default=1e-3,
+                           default=2e-4,
                            type=float,
                            help='controls the learning rate for the optimizer')
     argparser.add_argument('--beta1',
@@ -186,13 +186,17 @@ def main():
 
     # setup loss computation
     criterion = nn.BCELoss()
-    fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
+
+    # TODO: replace uniformly sampled noise to Gaussian distribution
+    # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
+    fixed_noise = torch.zeros(args.batch_size, gen_input_size)
+    gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device)
+    fixed_noise = gaussian_gen.forward(fixed_noise)
+    fixed_noise = fixed_noise.unsqueeze(-1)
+    fixed_noise = fixed_noise.unsqueeze(-1)
 
     real_label = 0
     fake_label = 1
-
-    # real_label = flip_label(real_label)
-    # fake_label = flip_label(fake_label)
 
     # setup optimizer
     optim_g = optim.Adam(generator.parameters(), lr=args.learning_rate, betas=(args.beta1, 0.999))
@@ -212,7 +216,13 @@ def main():
             D_x = output.mean().item()
 
             # train fake from generator and discriminator
-            noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
+            # noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
+            # TODO: replaced with gaussian noise
+            noise = torch.zeros(args.batch_size, gen_input_size)
+            noise = gaussian_gen.forward(noise)
+            noise = noise.unsqueeze(-1)
+            noise = noise.unsqueeze(-1)
+
             fake = generator(noise)
             label.fill_(generate_soft_labels(flip_label(fake_label)))
             output = discriminator(fake.detach())
