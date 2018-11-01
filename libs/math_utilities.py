@@ -11,7 +11,7 @@ def random_generator(min=0.0, max=0.3):
 
 class DynamicGaussianNoise(nn.Module):
     # TODO: add device selection support
-    def __init__(self, shape, device, mean=0., std=.05):
+    def __init__(self, shape, device, mean=0., std=.1):
         super(DynamicGaussianNoise, self).__init__()
         self.noise = Variable(torch.zeros(shape).to(device))
         self.std = std

@@ -38,11 +38,11 @@ def parse_arguments():
                            help='')
     argparser.add_argument('-lr',
                            '--learning_rate',
-                           default=2e-4,
+                           default=1e-3,
                            type=float,
                            help='controls the learning rate for the optimizer')
     argparser.add_argument('--beta1',
-                           default=0.9,
+                           default=0.99,
                            type=float,
                            help='beta1 value for adam')
     argparser.add_argument('--epoch',
@@ -51,10 +51,13 @@ def parse_arguments():
                            help='epoch for training')
     return argparser.parse_args()
 
+
 image_size = 128
 gen_input_size = 1024
 randomer = random_generator(min=0.0, max=1.)
 flip_threshold = 0.95
+noise_mean = 0.
+noise_std = 0.05
 
 randomer_low = random_generator(min=0.0, max=0.3)
 randomer_high = random_generator(min=0.7, max=1.2)
@@ -62,7 +65,8 @@ randomer_high = random_generator(min=0.7, max=1.2)
 transform = transforms.Compose([
     transforms.Resize((image_size, image_size)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -95,11 +99,11 @@ class Generator(nn.Module):
             nn.BatchNorm2d(256),
             nn.ConvTranspose2d(256, 128, 5, 2, 2, 1, bias=False), # 32x32x128
             nn.BatchNorm2d(128),
-            nn.ConvTranspose2d(128, 64, 5, 2, 2, 1, bias=False),  # 64x64x64
-            nn.BatchNorm2d(64),
-            nn.ConvTranspose2d(64, 3, 5, 2, 2, 1, bias=False),  # 128x128x32
-            # nn.BatchNorm2d(32),
-            # nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 256x256x3
+            nn.ConvTranspose2d(128, 32, 5, 2, 2, 1, bias=False),  # 64x64x64
+            # nn.BatchNorm2d(64),
+            # nn.ConvTranspose2d(64, 32, 5, 2, 2, 1, bias=False),  # 128x128x32
+            nn.BatchNorm2d(32),
+            nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 256x256x3
             nn.Tanh()
         )
 
@@ -131,12 +135,12 @@ class Discriminator(nn.Module):
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
             # 8 x 8 x 512
-            nn.Conv2d(256, 512, 4, 4, 1, bias=False),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(256, 1024, 4, 4, 1, bias=False),
+            nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.2, inplace=True),
             # # 4 x 4 x 1024
             # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
-            nn.Conv2d(512, 1, 2, 1, 0, bias=False),
+            nn.Conv2d(1024, 1, 2, 1, 0, bias=False),
             nn.Sigmoid()
         )
 
@@ -161,7 +165,7 @@ def flip_label(label):
     else:
         return label
 
-def generate_soft_labels(label):
+def generate_soft_labels(label, shape):
     """
     generate soft labels depends on the value of the hard labels.
     if label == 1, the range is (0.7, 1.2),
@@ -170,9 +174,9 @@ def generate_soft_labels(label):
     :return:
     """
     if label == 0:
-        return randomer_low.__next__()
+        return torch.empty(shape[0], shape[1]).uniform_(0.0, 0.3)
     elif label == 1:
-        return randomer_high.__next__()
+        return torch.empty(shape[0], shape[1]).uniform_(0.7, 1.2)
 
 def main():
     args = parse_arguments()
@@ -203,6 +207,7 @@ def main():
     # fixed_noise = torch.zeros(args.batch_size, gen_input_size)
     fixed_noise = torch.zeros(args.batch_size, image_size, image_size)
     gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device)
+
     fixed_noise = gaussian_gen.forward(fixed_noise)
     fixed_noise = fixed_noise.unsqueeze(-1)
     # fixed_noise = fixed_noise.unsqueeze(-1)
@@ -221,7 +226,10 @@ def main():
                 discriminator.zero_grad()
                 real_cpu = data[0].to(device)
                 batch_size = real_cpu.size(0)
-                label = torch.full((batch_size,), generate_soft_labels(flip_label(real_label)), device=device)
+                # label = torch.full((batch_size,),
+                #                    generate_soft_labels(flip_label(real_label)),
+                #                    device=device)
+                label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
 
                 output = discriminator(real_cpu)
                 loss_real = criterion(output, label)
@@ -231,6 +239,7 @@ def main():
                 # train fake from generator and discriminator
                 # noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
                 # TODO: replaced with gaussian noise
+
                 # noise = torch.zeros(args.batch_size, gen_input_size)
                 noise = torch.zeros(args.batch_size, image_size, image_size)
                 noise = gaussian_gen.forward(noise)
@@ -238,7 +247,8 @@ def main():
                 # noise = noise.unsqueeze(-1)
 
                 fake = generator(noise)
-                label.fill_(generate_soft_labels(flip_label(fake_label)))
+                label = generate_soft_labels(flip_label(fake_label), (batch_size, 1))
+
                 output = discriminator(fake.detach())
                 loss_fake = criterion(output, label)
                 loss_fake.backward()
@@ -247,7 +257,10 @@ def main():
                 optim_d.step()
 
                 # update generator
-                label.fill_(generate_soft_labels(real_label))
+
+                # label.fill_(generate_soft_labels(real_label))
+                label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
+
                 output = discriminator(fake)
                 loss_generator = criterion(output, label)
                 loss_generator.backward()
@@ -267,6 +280,7 @@ def main():
                                       normalize=True)
         except Exception as e:
             print(e, 'to the next epoch')
+
         # do checkpointing
         torch.save(generator.state_dict(), '%s/netG_epoch_%d.pth' % (args.output, epoch))
         torch.save(discriminator.state_dict(), '%s/netD_epoch_%d.pth' % (args.output, epoch))
