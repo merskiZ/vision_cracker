@@ -33,16 +33,16 @@ def parse_arguments():
                            type=int,
                            help='')
     argparser.add_argument('-bn', '--batch_size',
-                           default=4,
+                           default=8,
                            type=int,
                            help='')
     argparser.add_argument('-lr',
                            '--learning_rate',
-                           default=2e-4,
+                           default=1e-3,
                            type=float,
                            help='controls the learning rate for the optimizer')
     argparser.add_argument('--beta1',
-                           default=0.9,
+                           default=0.99,
                            type=float,
                            help='beta1 value for adam')
     argparser.add_argument('--epoch',
@@ -51,9 +51,11 @@ def parse_arguments():
                            help='epoch for training')
     return argparser.parse_args()
 
-gen_input_size = 128
+gen_input_size = 1024
 randomer = random_generator(min=0.0, max=1.)
 flip_threshold = 0.95
+noise_mean = 0.
+noise_std = 0.05
 
 randomer_low = random_generator(min=0.0, max=0.3)
 randomer_high = random_generator(min=0.7, max=1.2)
@@ -61,7 +63,8 @@ randomer_high = random_generator(min=0.7, max=1.2)
 transform = transforms.Compose([
     transforms.Resize((128, 128)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -84,11 +87,11 @@ class Generator(nn.Module):
             nn.BatchNorm2d(256),
             nn.ConvTranspose2d(256, 128, 5, 2, 2, 1, bias=False), # 32x32x128
             nn.BatchNorm2d(128),
-            nn.ConvTranspose2d(128, 64, 5, 2, 2, 1, bias=False),  # 64x64x64
-            nn.BatchNorm2d(64),
-            nn.ConvTranspose2d(64, 3, 5, 2, 2, 1, bias=False),  # 128x128x32
-            # nn.BatchNorm2d(32),
-            # nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 256x256x3
+            nn.ConvTranspose2d(128, 32, 5, 2, 2, 1, bias=False),  # 64x64x64
+            # nn.BatchNorm2d(64),
+            # nn.ConvTranspose2d(64, 32, 5, 2, 2, 1, bias=False),  # 128x128x32
+            nn.BatchNorm2d(32),
+            nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 256x256x3
             nn.Tanh()
         )
 
@@ -120,12 +123,12 @@ class Discriminator(nn.Module):
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
             # 8 x 8 x 512
-            nn.Conv2d(256, 512, 4, 4, 1, bias=False),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(256, 1024, 4, 4, 1, bias=False),
+            nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.2, inplace=True),
             # # 4 x 4 x 1024
             # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
-            nn.Conv2d(512, 1, 2, 1, 0, bias=False),
+            nn.Conv2d(1024, 1, 2, 1, 0, bias=False),
             nn.Sigmoid()
         )
 
@@ -150,7 +153,7 @@ def flip_label(label):
     else:
         return label
 
-def generate_soft_labels(label):
+def generate_soft_labels(label, shape):
     """
     generate soft labels depends on the value of the hard labels.
     if label == 1, the range is (0.7, 1.2),
@@ -159,9 +162,9 @@ def generate_soft_labels(label):
     :return:
     """
     if label == 0:
-        return randomer_low.__next__()
+        return torch.empty(shape[0], shape[1]).uniform_(0.0, 0.3)
     elif label == 1:
-        return randomer_high.__next__()
+        return torch.empty(shape[0], shape[1]).uniform_(0.7, 1.2)
 
 def main():
     args = parse_arguments()
@@ -190,7 +193,8 @@ def main():
     # TODO: replace uniformly sampled noise to Gaussian distribution
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
     fixed_noise = torch.zeros(args.batch_size, gen_input_size)
-    gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device)
+    gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device,
+                                        mean=noise_mean, std=noise_std)
     fixed_noise = gaussian_gen.forward(fixed_noise)
     fixed_noise = fixed_noise.unsqueeze(-1)
     fixed_noise = fixed_noise.unsqueeze(-1)
@@ -203,54 +207,62 @@ def main():
     optim_d = optim.Adam(discriminator.parameters(), lr=args.learning_rate, betas=(args.beta1, 0.999))
 
     for epoch in range(args.epoch):
-        for i, data in enumerate(data_loader):
-            # train real
-            discriminator.zero_grad()
-            real_cpu = data[0].to(device)
-            batch_size = real_cpu.size(0)
-            label = torch.full((batch_size,), generate_soft_labels(flip_label(real_label)), device=device)
+        try:
+            for i, data in enumerate(data_loader):
+                # train real
+                discriminator.zero_grad()
+                real_cpu = data[0].to(device)
+                batch_size = real_cpu.size(0)
+                # label = torch.full((batch_size,),
+                #                    generate_soft_labels(flip_label(real_label)),
+                #                    device=device)
+                label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
 
-            output = discriminator(real_cpu)
-            loss_real = criterion(output, label)
-            loss_real.backward()
-            D_x = output.mean().item()
+                output = discriminator(real_cpu)
+                loss_real = criterion(output, label)
+                loss_real.backward()
+                D_x = output.mean().item()
 
-            # train fake from generator and discriminator
-            # noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
-            # TODO: replaced with gaussian noise
-            noise = torch.zeros(args.batch_size, gen_input_size)
-            noise = gaussian_gen.forward(noise)
-            noise = noise.unsqueeze(-1)
-            noise = noise.unsqueeze(-1)
+                # train fake from generator and discriminator
+                # noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
+                # TODO: replaced with gaussian noise
+                noise = torch.zeros(args.batch_size, gen_input_size)
+                noise = gaussian_gen.forward(noise)
+                noise = noise.unsqueeze(-1)
+                noise = noise.unsqueeze(-1)
 
-            fake = generator(noise)
-            label.fill_(generate_soft_labels(flip_label(fake_label)))
-            output = discriminator(fake.detach())
-            loss_fake = criterion(output, label)
-            loss_fake.backward()
-            D_G_z1 = output.mean().item()
-            d_loss = loss_fake + loss_real
-            optim_d.step()
+                fake = generator(noise)
+                # label.fill_(generate_soft_labels(flip_label(fake_label)))
+                label = generate_soft_labels(flip_label(fake_label), (batch_size, 1))
+                output = discriminator(fake.detach())
+                loss_fake = criterion(output, label)
+                loss_fake.backward()
+                D_G_z1 = output.mean().item()
+                d_loss = loss_fake + loss_real
+                optim_d.step()
 
-            # update generator
-            label.fill_(generate_soft_labels(real_label))
-            output = discriminator(fake)
-            loss_generator = criterion(output, label)
-            loss_generator.backward()
-            D_G_z2 = output.mean().item()
-            optim_g.step()
+                # update generator
+                # label.fill_(generate_soft_labels(real_label))
+                label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
+                output = discriminator(fake)
+                loss_generator = criterion(output, label)
+                loss_generator.backward()
+                D_G_z2 = output.mean().item()
+                optim_g.step()
 
-            print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
-                  % (epoch, args.epoch, i, len(data_loader),
-                     d_loss.item(), loss_generator.item(), D_x, D_G_z1, D_G_z2))
-            if i % 100 == 0:
-                vutils.save_image(real_cpu,
-                                  '%s/real_samples.png' % args.output,
-                                  normalize=True)
-                fake = generator(fixed_noise)
-                vutils.save_image(fake.detach(),
-                                  '%s/fake_samples_epoch_%03d.png' % (args.output, epoch),
-                                  normalize=True)
+                print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+                      % (epoch, args.epoch, i, len(data_loader),
+                         d_loss.item(), loss_generator.item(), D_x, D_G_z1, D_G_z2))
+                if i % 10 == 0:
+                    vutils.save_image(real_cpu,
+                                      '%s/real_samples.png' % args.output,
+                                      normalize=True)
+                    fake = generator(fixed_noise)
+                    vutils.save_image(fake.detach(),
+                                      '%s/fake_samples_epoch_%03d_batch_%04d.png' % (args.output, epoch, i),
+                                      normalize=True)
+        except Exception as e:
+            continue
         # do checkpointing
         torch.save(generator.state_dict(), '%s/netG_epoch_%d.pth' % (args.output, epoch))
         torch.save(discriminator.state_dict(), '%s/netD_epoch_%d.pth' % (args.output, epoch))
