@@ -51,7 +51,8 @@ def parse_arguments():
                            help='epoch for training')
     return argparser.parse_args()
 
-gen_input_size = 128
+image_size = 128
+gen_input_size = 1024
 randomer = random_generator(min=0.0, max=1.)
 flip_threshold = 0.95
 
@@ -59,7 +60,7 @@ randomer_low = random_generator(min=0.0, max=0.3)
 randomer_high = random_generator(min=0.7, max=1.2)
 
 transform = transforms.Compose([
-    transforms.Resize((128, 128)),
+    transforms.Resize((image_size, image_size)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
@@ -76,6 +77,16 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.net = nn.Sequential(
+            # add VAE part
+            ######################################
+            nn.Conv2d(image_size, 64, 3, stride=1, padding=1, bias=False), # 128x128x64
+            nn.Conv2d(64, 128, 3, stride=2, padding=1, bias=False), # 64x64x128
+            nn.Conv2d(128, 256, 3, stride=2, padding=1, bias=False), # 32x32x256
+            nn.Conv2d(256, 512, 3, stride=2, padding=1, bias=False), # 16x16x512
+            nn.Conv2d(512, 1024, 3, stride=4, padding=1, bias=False), # 4x4x1024
+            nn.Conv2d(1024, 1024, 3, stride=4, padding=1, bias=False), # 1x1x1024
+            #####################################
+
             nn.ConvTranspose2d(gen_input_size, 1024, 4, 1, bias=False), # 4x4x1024
             nn.BatchNorm2d(1024),
             nn.ConvTranspose2d(1024, 512, 5, 2, 2, 1, bias=False), # 8x8x512
@@ -189,11 +200,12 @@ def main():
 
     # TODO: replace uniformly sampled noise to Gaussian distribution
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
-    fixed_noise = torch.zeros(args.batch_size, gen_input_size)
+    # fixed_noise = torch.zeros(args.batch_size, gen_input_size)
+    fixed_noise = torch.zeros(args.batch_size, image_size, image_size)
     gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device)
     fixed_noise = gaussian_gen.forward(fixed_noise)
     fixed_noise = fixed_noise.unsqueeze(-1)
-    fixed_noise = fixed_noise.unsqueeze(-1)
+    # fixed_noise = fixed_noise.unsqueeze(-1)
 
     real_label = 0
     fake_label = 1
@@ -218,10 +230,11 @@ def main():
             # train fake from generator and discriminator
             # noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
             # TODO: replaced with gaussian noise
-            noise = torch.zeros(args.batch_size, gen_input_size)
+            # noise = torch.zeros(args.batch_size, gen_input_size)
+            noise = torch.zeros(args.batch_size, image_size, image_size)
             noise = gaussian_gen.forward(noise)
             noise = noise.unsqueeze(-1)
-            noise = noise.unsqueeze(-1)
+            # noise = noise.unsqueeze(-1)
 
             fake = generator(noise)
             label.fill_(generate_soft_labels(flip_label(fake_label)))
@@ -243,13 +256,13 @@ def main():
             print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                   % (epoch, args.epoch, i, len(data_loader),
                      d_loss.item(), loss_generator.item(), D_x, D_G_z1, D_G_z2))
-            if i % 100 == 0:
+            if i % 20 == 0:
                 vutils.save_image(real_cpu,
                                   '%s/real_samples.png' % args.output,
                                   normalize=True)
                 fake = generator(fixed_noise)
                 vutils.save_image(fake.detach(),
-                                  '%s/fake_samples_epoch_%03d.png' % (args.output, epoch),
+                                  '%s/fake_samples_epoch_%03d_batch_%04d.png' % (args.output, epoch, i),
                                   normalize=True)
         # do checkpointing
         torch.save(generator.state_dict(), '%s/netG_epoch_%d.pth' % (args.output, epoch))
