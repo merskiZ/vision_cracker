@@ -33,20 +33,20 @@ def parse_arguments():
                            type=int,
                            help='')
     argparser.add_argument('-bn', '--batch_size',
-                           default=4,
+                           default=8,
                            type=int,
                            help='')
     argparser.add_argument('-lr',
                            '--learning_rate',
-                           default=1e-3,
+                           default=2e-4,
                            type=float,
                            help='controls the learning rate for the optimizer')
     argparser.add_argument('--beta1',
-                           default=0.99,
+                           default=0.9,
                            type=float,
                            help='beta1 value for adam')
     argparser.add_argument('--epoch',
-                           default=10,
+                           default=100,
                            type=int,
                            help='epoch for training')
     return argparser.parse_args()
@@ -57,7 +57,7 @@ gen_input_size = 1024
 randomer = random_generator(min=0.0, max=1.)
 flip_threshold = 0.95
 noise_mean = 0.
-noise_std = 0.05
+noise_std = 0.1
 
 randomer_low = random_generator(min=0.0, max=0.3)
 randomer_high = random_generator(min=0.7, max=1.2)
@@ -83,27 +83,27 @@ class Generator(nn.Module):
         self.net = nn.Sequential(
             # add VAE part
             ######################################
-            nn.Conv2d(image_size, 64, 3, stride=1, padding=1, bias=False), # 128x128x64
-            nn.Conv2d(64, 128, 3, stride=2, padding=1, bias=False), # 64x64x128
-            nn.Conv2d(128, 256, 3, stride=2, padding=1, bias=False), # 32x32x256
-            nn.Conv2d(256, 512, 3, stride=2, padding=1, bias=False), # 16x16x512
-            nn.Conv2d(512, 1024, 3, stride=4, padding=1, bias=False), # 4x4x1024
-            nn.Conv2d(1024, 1024, 3, stride=4, padding=1, bias=False), # 1x1x1024
+            nn.Conv2d(image_size, 64, 3, stride=1, padding=1), # 128x128x64
+            nn.Conv2d(64, 128, 3, stride=2, padding=1), # 64x64x128
+            nn.Conv2d(128, 256, 3, stride=2, padding=1), # 32x32x256
+            nn.Conv2d(256, 512, 3, stride=2, padding=1), # 16x16x512
+            nn.Conv2d(512, 1024, 3, stride=4, padding=1), # 4x4x1024
+            nn.Conv2d(1024, 1024, 3, stride=4, padding=1), # 1x1x1024
             #####################################
 
-            nn.ConvTranspose2d(gen_input_size, 1024, 4, 1, bias=False), # 4x4x1024
+            nn.ConvTranspose2d(gen_input_size, 1024, 4, 1), # 4x4x1024
             nn.BatchNorm2d(1024),
-            nn.ConvTranspose2d(1024, 512, 5, 2, 2, 1, bias=False), # 8x8x512
+            nn.ConvTranspose2d(1024, 512, 5, 2, 2, 1), # 8x8x512
             nn.BatchNorm2d(512),
-            nn.ConvTranspose2d(512, 256, 5, 2, 2, 1, bias=False), # 16x16x256
+            nn.ConvTranspose2d(512, 256, 5, 2, 2, 1), # 16x16x256
             nn.BatchNorm2d(256),
-            nn.ConvTranspose2d(256, 128, 5, 2, 2, 1, bias=False), # 32x32x128
+            nn.ConvTranspose2d(256, 128, 5, 2, 2, 1), # 32x32x128
             nn.BatchNorm2d(128),
-            nn.ConvTranspose2d(128, 32, 5, 2, 2, 1, bias=False),  # 64x64x64
+            nn.ConvTranspose2d(128, 32, 5, 2, 2, 1),  # 64x64x64
             # nn.BatchNorm2d(64),
             # nn.ConvTranspose2d(64, 32, 5, 2, 2, 1, bias=False),  # 128x128x32
             nn.BatchNorm2d(32),
-            nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 256x256x3
+            nn.ConvTranspose2d(32, 3, 5, 2, 2, 1),  # 256x256x3
             nn.Tanh()
         )
 
@@ -120,27 +120,27 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.net = nn.Sequential(
-            nn.Conv2d(3, 32, 4, 2, 1, bias=False),
+            nn.Conv2d(3, 32, 4, 2, 1),
             nn.LeakyReLU(0.2, inplace=True),
             # 64 x 64 x 64
-            nn.Conv2d(32, 64, 4, 2, 1, bias=False),
+            nn.Conv2d(32, 64, 4, 2, 1),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2, inplace=True),
             # 32 x 32 x 128
-            nn.Conv2d(64, 128, 4, 2, 1, bias=False),
+            nn.Conv2d(64, 128, 4, 2, 1),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2, inplace=True),
             # 16 x 16 x 256
-            nn.Conv2d(128, 256, 4, 2, 1, bias=False),
+            nn.Conv2d(128, 256, 4, 2, 1),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
             # 8 x 8 x 512
-            nn.Conv2d(256, 1024, 4, 4, 1, bias=False),
+            nn.Conv2d(256, 1024, 4, 4, 1),
             nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.2, inplace=True),
             # # 4 x 4 x 1024
             # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
-            nn.Conv2d(1024, 1, 2, 1, 0, bias=False),
+            nn.Conv2d(1024, 1, 2, 1, 0),
             nn.Sigmoid()
         )
 
@@ -206,7 +206,7 @@ def main():
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
     # fixed_noise = torch.zeros(args.batch_size, gen_input_size)
     fixed_noise = torch.zeros(args.batch_size, image_size, image_size)
-    gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device)
+    gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device, mean=noise_mean, std=noise_std)
 
     fixed_noise = gaussian_gen.forward(fixed_noise)
     fixed_noise = fixed_noise.unsqueeze(-1)
