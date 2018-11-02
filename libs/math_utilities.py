@@ -16,10 +16,11 @@ class DynamicGaussianNoise(nn.Module):
         self.noise = Variable(torch.zeros(shape[0], shape[1]).to(device))
         self.std = std
         self.mean = mean
+        self.device = device
 
     def forward(self, x):
         if not self.training:
             return x
 
         self.noise.data.normal_(self.mean, std=self.std)
-        return x + self.noise
+        return x + self.noise.to(self.device)
