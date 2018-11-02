@@ -196,7 +196,7 @@ def main():
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
     fixed_noise = torch.zeros(args.batch_size, gen_input_size)
     gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device,
-                                        mean=noise_mean, std=noise_std)
+                                        mean=noise_mean, std=noise_std).to(device)
     fixed_noise = gaussian_gen.forward(fixed_noise)
     fixed_noise = fixed_noise.unsqueeze(-1)
     fixed_noise = fixed_noise.unsqueeze(-1)
