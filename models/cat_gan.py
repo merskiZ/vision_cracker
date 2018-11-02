@@ -181,22 +181,31 @@ def main():
 
     # initialize generator net
     generator = Generator(ngpu).to(device)
+    if ngpu > 0:
+        generator = generator.cuda()
     generator.apply(weights_init)
     print(generator)
 
     # initialize discriminator
     discriminator = Discriminator(ngpu).to(device)
+    if ngpu > 0:
+        discriminator = discriminator.cuda()
     discriminator.apply(weights_init)
     print(discriminator)
 
     # setup loss computation
     criterion = nn.BCELoss()
+    if ngpu > 0:
+        criterion = nn.BCELoss().cuda()
 
     # TODO: replace uniformly sampled noise to Gaussian distribution
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
-    fixed_noise = torch.zeros(args.batch_size, gen_input_size)
+    fixed_noise = torch.zeros(args.batch_size, gen_input_size).to(device)
+
     gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device,
-                                        mean=noise_mean, std=noise_std).to(device)
+                                        mean=noise_mean, std=noise_std)
+    if ngpu > 0:
+        gaussian_gen = gaussian_gen.cuda()
     fixed_noise = gaussian_gen.forward(fixed_noise)
     fixed_noise = fixed_noise.unsqueeze(-1)
     fixed_noise = fixed_noise.unsqueeze(-1)
