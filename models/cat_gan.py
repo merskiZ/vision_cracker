@@ -38,15 +38,15 @@ def parse_arguments():
                            help='')
     argparser.add_argument('-lr',
                            '--learning_rate',
-                           default=1e-3,
+                           default=2e-4,
                            type=float,
                            help='controls the learning rate for the optimizer')
     argparser.add_argument('--beta1',
-                           default=0.99,
+                           default=0.9,
                            type=float,
                            help='beta1 value for adam')
     argparser.add_argument('--epoch',
-                           default=10,
+                           default=100,
                            type=int,
                            help='epoch for training')
     return argparser.parse_args()
@@ -56,6 +56,8 @@ randomer = random_generator(min=0.0, max=1.)
 flip_threshold = 0.95
 noise_mean = 0.
 noise_std = 0.05
+
+d_train_epochs = 10
 
 randomer_low = random_generator(min=0.0, max=0.3)
 randomer_high = random_generator(min=0.7, max=1.2)
@@ -206,6 +208,9 @@ def main():
     optim_g = optim.Adam(generator.parameters(), lr=args.learning_rate, betas=(args.beta1, 0.999))
     optim_d = optim.Adam(discriminator.parameters(), lr=args.learning_rate, betas=(args.beta1, 0.999))
 
+    # discriminator training epochs counter
+    d_counter = 0
+
     for epoch in range(args.epoch):
         try:
             for i, data in enumerate(data_loader):
@@ -219,8 +224,11 @@ def main():
                 label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
 
                 output = discriminator(real_cpu)
+
+                # TODO: added epoch control to train discriminator first for certain epochs
                 loss_real = criterion(output, label)
-                loss_real.backward()
+                if d_counter < d_train_epochs:
+                    loss_real.backward()
                 D_x = output.mean().item()
 
                 # train fake from generator and discriminator
@@ -235,25 +243,30 @@ def main():
                 # label.fill_(generate_soft_labels(flip_label(fake_label)))
                 label = generate_soft_labels(flip_label(fake_label), (batch_size, 1))
                 output = discriminator(fake.detach())
-                loss_fake = criterion(output, label)
-                loss_fake.backward()
                 D_G_z1 = output.mean().item()
+
+                loss_fake = criterion(output, label)
                 d_loss = loss_fake + loss_real
-                optim_d.step()
+                if d_counter < d_train_epochs:
+                    loss_fake.backward()
+                    optim_d.step()
 
                 # update generator
-                # label.fill_(generate_soft_labels(real_label))
+
                 label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
                 output = discriminator(fake)
-                loss_generator = criterion(output, label)
-                loss_generator.backward()
                 D_G_z2 = output.mean().item()
-                optim_g.step()
+                loss_generator = criterion(output, label)
+
+                # TODO: only after certain epochs start to train discriminator
+                if d_counter >= d_train_epochs:
+                    loss_generator.backward()
+                    optim_g.step()
 
                 print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                       % (epoch, args.epoch, i, len(data_loader),
                          d_loss.item(), loss_generator.item(), D_x, D_G_z1, D_G_z2))
-                if i % 10 == 0:
+                if i % 10 == 0 and d_counter > d_train_epochs:
                     vutils.save_image(real_cpu,
                                       '%s/real_samples.png' % args.output,
                                       normalize=True)
@@ -262,7 +275,8 @@ def main():
                                       '%s/fake_samples_epoch_%03d_batch_%04d.png' % (args.output, epoch, i),
                                       normalize=True)
         except Exception as e:
-            continue
+            pass
+        d_counter += 1
         # do checkpointing
         torch.save(generator.state_dict(), '%s/netG_epoch_%d.pth' % (args.output, epoch))
         torch.save(discriminator.state_dict(), '%s/netD_epoch_%d.pth' % (args.output, epoch))
