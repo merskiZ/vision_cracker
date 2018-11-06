@@ -59,6 +59,8 @@ noise_std = 0.05
 
 d_train_epochs = 10
 
+train_both_epochs = 25
+
 randomer_low = random_generator(min=0.0, max=0.3)
 randomer_high = random_generator(min=0.7, max=1.2)
 
@@ -110,27 +112,27 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.net = nn.Sequential(
-            nn.Conv2d(3, 32, 4, 2, 1, bias=False),
+            nn.Conv2d(3, 32, 3, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             # 64 x 64 x 64
-            nn.Conv2d(32, 64, 4, 2, 1, bias=False),
+            nn.Conv2d(32, 64, 3, 2, 1, bias=False),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2, inplace=True),
             # 32 x 32 x 128
-            nn.Conv2d(64, 128, 4, 2, 1, bias=False),
+            nn.Conv2d(64, 128, 3, 2, 1, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2, inplace=True),
             # 16 x 16 x 256
-            nn.Conv2d(128, 256, 4, 2, 1, bias=False),
+            nn.Conv2d(128, 256, 3, 2, 1, bias=False),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
             # 8 x 8 x 512
-            nn.Conv2d(256, 1024, 4, 4, 1, bias=False),
-            nn.BatchNorm2d(1024),
+            nn.Conv2d(256, 512, 3, 4, 1, bias=False),
+            nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2, inplace=True),
             # # 4 x 4 x 1024
             # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
-            nn.Conv2d(1024, 1, 2, 1, 0, bias=False),
+            nn.Conv2d(512, 1, 2, 3, 0, bias=False),
             nn.Sigmoid()
         )
 
@@ -236,7 +238,7 @@ def main():
 
                 # TODO: added epoch control to train discriminator first for certain epochs
                 loss_real = criterion(output, label)
-                if d_counter < d_train_epochs:
+                if d_counter < d_train_epochs or d_counter >= train_both_epochs:
                     loss_real.backward()
                 D_x = output.mean().item()
 
@@ -256,7 +258,7 @@ def main():
 
                 loss_fake = criterion(output, label)
                 d_loss = loss_fake + loss_real
-                if d_counter < d_train_epochs:
+                if d_counter < d_train_epochs or d_counter >= train_both_epochs:
                     loss_fake.backward()
                     optim_d.step()
 
@@ -275,7 +277,7 @@ def main():
                 print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                       % (epoch, args.epoch, i, len(data_loader),
                          d_loss.item(), loss_generator.item(), D_x, D_G_z1, D_G_z2))
-                if i % 10 == 0 and d_counter > d_train_epochs:
+                if i % 10 == 0 and d_counter >= d_train_epochs:
                     vutils.save_image(real_cpu,
                                       '%s/real_samples.png' % args.output,
                                       normalize=True)
