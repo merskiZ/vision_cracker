@@ -70,3 +70,32 @@ class VOCDataset(Dataset):
         labels_dict = self.xml_reader.read_xml_file(self.annotations[index])
         labels = self.organize_labels(labels_dict)
         return image, labels
+
+class ImageNetDataset(Dataset):
+    def __init__(self, image_folder,
+                 annotation_folder,
+                 annotation_map_file,
+                 image_pattern='.jpg',
+                 annotation_pattern='.xml',
+                 normalization=False,
+                 resize_x=448,
+                 resize_y=448,
+                 num_classes=20):
+        self.images = get_file_list(image_folder, image_pattern)
+        self.annotations = get_file_list(annotation_folder, annotation_pattern)
+        self.annotation_mapping = np.load(annotation_map_file)
+        self.xml_reader = XMLReader()
+        self.normalize = normalization
+        self.target_size = (resize_x, resize_y)
+        self.num_classes = num_classes
+
+    def organize_labels(self, labels_dict):
+
+        pass
+
+    def __getitem__(self, index):
+        image = cv2.imread(self.images[index])
+        image = resize_image(image, self.target_size)
+        labels_dict = self.xml_reader.read_xml_file(self.annotations[index])
+        labels = self.organize_labels(labels_dict)
+        return image, labels

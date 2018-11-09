@@ -35,13 +35,13 @@ implementation of YOLO:
 │ FC 2       │ -                      │ 7 x 7 x 30 (1470) │
 └────────────┴────────────────────────┴───────────────────┘
 """
-
+import os
 import torch
 import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
 import torch.optim as optim
 from torchvision.transforms import transforms, ToTensor
-from data.voc_iterator import VOCDataset
+from data.datasets import VOCDataset
 
 use_cuda = torch.cuda.is_available()
 
@@ -118,6 +118,18 @@ class Yolo(nn.Module):
 
         return x
 
+# classification net use to do pretrain the Yolo net
+class ClassificationNet(nn.Module):
+    def __init__(self, num_classes):
+        super(ClassificationNet, self).__init__()
+
+        self.num_classes = num_classes
+        self.fc = nn.Linear(7 * 7 * 30, num_classes)
+
+    def forward(self, x):
+        out = self.fc(x)
+        return out
+
 class BoxRegressionNet(nn.Module):
     def __init__(self,
                  s,
@@ -135,6 +147,35 @@ class BoxRegressionNet(nn.Module):
                 grid_preds.append(grid_pred)
         return grid_preds
 
+def train_step(data_loader, optimizer,
+               preprocess, yolo,
+               class_prediction, box_regress,
+               pretrain, step):
+    yolo.train()
+    if pretrain:
+        class_prediction.train()
+    else:
+        box_regress.train()
+    for i, (image, label) in enumerate(data_loader):
+        image_tensor = preprocess(image)
+
+        yolo_out = yolo.forward(image_tensor)
+        optimizer.zero_grad()
+        if pretrain:
+            classes_pred = class_prediction.forward(yolo_out)
+            criterion = nn.CrossEntropyLoss()
+            loss = criterion(classes_pred, label)
+        else:
+            box_preds = box_regress.forward(yolo_out)
+            criterion = nn.MSELoss()
+            loss = criterion()
+        loss.backward()
+        optimizer.step()
+        print("Train step {}, loss {}".format(step, loss.item()))
+        step += 1
+    return step
+
+
 def train(input_folder,
           annotation_folder,
           annotation_map,
@@ -145,7 +186,11 @@ def train(input_folder,
           s,
           lr,
           beta1,
-          epochs):
+          epochs,
+          checkpoint=None,
+          ckpt_save_epoch=10,
+          pretrain=False,
+          pretrain_epochs=1000):
     # get data generator ready
     dataset = VOCDataset(image_folder=input_folder,
                          annotation_folder=annotation_folder,
@@ -160,27 +205,42 @@ def train(input_folder,
     else:
         yolo = Yolo()
 
+    # if we want to pretrain the model, then we need to use a classification net
+    # instead of a box regression net follows the yolo net
+    class_prediction = None
     box_regress = None
-    if use_cuda:
-        box_regress = BoxRegressionNet(s,
-                                       num_boxes=num_boxes,
-                                       num_classes=num_classes).cuda()
+    if pretrain:
+        if use_cuda:
+            box_regress = BoxRegressionNet(s,
+                                           num_boxes=num_boxes,
+                                           num_classes=num_classes).cuda()
+        else:
+            box_regress = BoxRegressionNet(s,
+                                           num_boxes=num_boxes,
+                                           num_classes=num_classes)
     else:
-        box_regress = BoxRegressionNet(s,
-                                       num_boxes=num_boxes,
-                                       num_classes=num_classes)
+        if use_cuda:
+            class_prediction = ClassificationNet(num_classes=num_classes).cuda()
+        else:
+            class_prediction = ClassificationNet(num_classes=num_classes)
 
     # image preprocessing
     preprocess = transforms.Compose([ToTensor()])
 
     # get optimizer ready
-    optimizer = optim.Adam([yolo, box_regress], lr=lr, betas=(beta1, 0.999))
+    if pretrain:
+        optimizer = optim.Adam([yolo, class_prediction], lr=lr, betas=(beta1, 0.999))
+    else:
+        optimizer = optim.Adam([yolo, box_regress], lr=lr, betas=(beta1, 0.999))
 
+    step = 1
     for epoch in range(epochs):
-        for i, (image, label) in enumerate(data_loader):
-            image_tensor = preprocess(image)
+        step = train_step(data_loader, optimizer,
+                          preprocess, yolo,
+                          class_prediction, box_regress,
+                          pretrain, step)
 
-            yolo_out = yolo(image_tensor)
-            box_preds = box_regress(yolo_out)
-
-            
+        if epochs % ckpt_save_epoch == 0:
+            torch.save(yolo.state_dict(),
+                       os.path.join(output_folder,
+                                    'ckpt_yolo_{}.tar'.format(step)))
