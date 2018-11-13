@@ -6,16 +6,27 @@ for convtranspose2d, H_out = (H_in - 1) * stride[0] - 2 * padding[0] + kernel_si
 
 for conv2d,          H_out = floor((H_in + 2 * padding[0] - dilation[0] * (kernel_size[0] - 1) - 1) / stride[0] + 1)
                      W_out = floor((W_in + 2 * padding[1] - dilation[1] * (kernel_size[1] - 1) - 1) / stride[0] + 1)
+
+in imagenet, the cat category should be from 281 to 285
+
+ 281: 'tabby, tabby cat',
+ 282: 'tiger cat',
+ 283: 'Persian cat',
+ 284: 'Siamese cat, Siamese',
+ 285: 'Egyptian cat',
+
 """
 
 import os
 import argparse
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 import torchvision.utils as vutils
+from torchvision.models import resnet18
 import pandas
 
 from libs.utilities import Utilities
@@ -46,22 +57,26 @@ def parse_arguments():
                            type=float,
                            help='beta1 value for adam')
     argparser.add_argument('--epoch',
-                           default=10,
+                           default=100000,
                            type=int,
                            help='epoch for training')
     return argparser.parse_args()
 
-gen_input_size = 1024
+gen_input_size = 196
+gen_w = 14
 randomer = random_generator(min=0.0, max=1.)
 flip_threshold = 0.95
 noise_mean = 0.
 noise_std = 0.05
+dropout_rate = 0.5
 
 randomer_low = random_generator(min=0.0, max=0.3)
 randomer_high = random_generator(min=0.7, max=1.2)
 
+cnn_epochs = 100
+
 transform = transforms.Compose([
-    transforms.Resize((128, 128)),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
     # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
@@ -75,70 +90,104 @@ def weights_init(m):
         m.bias.data.fill_(0)
 
 class Generator(nn.Module):
-    def __init__(self, ngpu=0):
+    def __init__(self):
         super(Generator, self).__init__()
-        self.ngpu = ngpu
-        self.net = nn.Sequential(
-            nn.ConvTranspose2d(gen_input_size, 1024, 4, 1, bias=False), # 4x4x1024
-            nn.BatchNorm2d(1024),
-            nn.ConvTranspose2d(1024, 512, 5, 2, 2, 1, bias=False), # 8x8x512
-            nn.BatchNorm2d(512),
-            nn.ConvTranspose2d(512, 256, 5, 2, 2, 1, bias=False), # 16x16x256
-            nn.BatchNorm2d(256),
-            nn.ConvTranspose2d(256, 128, 5, 2, 2, 1, bias=False), # 32x32x128
-            nn.BatchNorm2d(128),
-            nn.ConvTranspose2d(128, 32, 5, 2, 2, 1, bias=False),  # 64x64x64
-            # nn.BatchNorm2d(64),
-            # nn.ConvTranspose2d(64, 32, 5, 2, 2, 1, bias=False),  # 128x128x32
-            nn.BatchNorm2d(32),
-            nn.ConvTranspose2d(32, 3, 5, 2, 2, 1, bias=False),  # 256x256x3
-            nn.Tanh()
-        )
+        # self.ngpu = ngpu
+        # self.net = nn.Sequential(
+        self.deconv1 = nn.ConvTranspose2d(1, 64, 3, 1, 1, bias=False) # 16x16x1024
+        self.bn1 = nn.BatchNorm2d(64)
+        self.dp1 = nn.Dropout2d(p=dropout_rate)
+        self.deconv2 = nn.ConvTranspose2d(64, 64, 3, 2, 1, 1, bias=False) # 32x32x64
+        self.bn2 = nn.BatchNorm2d(64)
+        self.dp2 = nn.Dropout2d(p=dropout_rate)
+        self.deconv3 = nn.ConvTranspose2d(64, 64, 3, 2, 1, 1, bias=False) # 64x64x64
+        self.bn3 = nn.BatchNorm2d(64)
+        self.dp3 = nn.Dropout2d(p=dropout_rate)
+        self.deconv4 = nn.ConvTranspose2d(64, 64, 3, 2, 1, 1, bias=False) # 128x128x64
+        self.bn4 = nn.BatchNorm2d(64)
+        self.dp4 = nn.Dropout2d(p=dropout_rate)
+        self.deconv5 = nn.ConvTranspose2d(64, 3, 3, 2, 1, 1, bias=False)  # 256x256x3
+        # self.tanh = nn.Tanh()
+        self.sigmoid = nn.Sigmoid()
+        # )
 
     def forward(self, x):
-        if self.ngpu > 1:
-            output = nn.parallel.data_parallel(self.net, x, range(self.ngpu))
-        else:
-            output = self.net(x)
+
+        x = self.deconv1(x)
+        x = self.bn1(x)
+        x = self.dp1(x)
+
+        x = self.deconv2(x)
+        x = self.bn2(x)
+        x = self.dp2(x)
+
+        x = self.deconv3(x)
+        x = self.bn3(x)
+        x = self.dp3(x)
+
+        x = self.deconv4(x)
+        x = self.bn4(x)
+        x = self.dp4(x)
+
+        x = self.deconv5(x)
+        output = self.sigmoid(x)
+
         return output
 
 
 class Discriminator(nn.Module):
-    def __init__(self, ngpu=0):
+    def __init__(self, batch_size):
         super(Discriminator, self).__init__()
-        self.ngpu = ngpu
-        self.net = nn.Sequential(
-            nn.Conv2d(3, 32, 4, 2, 1, bias=False),
-            nn.LeakyReLU(0.2, inplace=True),
-            # 64 x 64 x 64
-            nn.Conv2d(32, 64, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2, inplace=True),
-            # 32 x 32 x 128
-            nn.Conv2d(64, 128, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2, inplace=True),
-            # 16 x 16 x 256
-            nn.Conv2d(128, 256, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2, inplace=True),
-            # 8 x 8 x 512
-            nn.Conv2d(256, 1024, 4, 4, 1, bias=False),
-            nn.BatchNorm2d(1024),
-            nn.LeakyReLU(0.2, inplace=True),
-            # # 4 x 4 x 1024
-            # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
-            nn.Conv2d(1024, 1, 2, 1, 0, bias=False),
-            nn.Sigmoid()
-        )
+
+        self.resnet = resnet18(pretrained=True)
+        for param in self.resnet.parameters():
+            param.requires_grad = True
+
+        self.fc = nn.Linear(batch_size * 1000, batch_size)
+        self.sigmoid = nn.Sigmoid()
+        self.softmax = nn.Softmax2d()
+
+        # self.ngpu = ngpu
+        # self.net = nn.Sequential(
+        #     nn.Conv2d(3, 32, 4, 2, 1, bias=False),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     # 64 x 64 x 64
+        #     nn.Conv2d(32, 64, 4, 2, 1, bias=False),
+        #     nn.BatchNorm2d(64),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     # 32 x 32 x 128
+        #     nn.Conv2d(64, 128, 4, 2, 1, bias=False),
+        #     nn.BatchNorm2d(128),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     # 16 x 16 x 256
+        #     nn.Conv2d(128, 256, 4, 2, 1, bias=False),
+        #     nn.BatchNorm2d(256),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     # 8 x 8 x 512
+        #     nn.Conv2d(256, 1024, 4, 4, 1, bias=False),
+        #     nn.BatchNorm2d(1024),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     # # 4 x 4 x 1024
+        #     # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
+        #     nn.Conv2d(1024, 1, 2, 1, 0, bias=False),
+        #     nn.Sigmoid()
+        # )
 
     def forward(self, x):
 
-        if self.ngpu > 1:
-            output = nn.parallel.data_parallel(self.net, x, range(self.ngpu))
-        else:
-            output = self.net(x)
-        return output
+        # if self.ngpu > 1:
+        #     output = nn.parallel.data_parallel(self.net, x, range(self.ngpu))
+        # else:
+        #     output = self.net(x)
+
+        x = self.resnet(x)
+        # x = x.unsqueeze(-1)
+        # x = x.unsqueeze(-1)
+        x = x.view(-1)
+        x = self.fc(x)
+        # output = self.softmax(x)
+        x = self.sigmoid(x)
+        return x
 
 
 def flip_label(label):
@@ -175,17 +224,17 @@ def main():
     data_loader = torch.utils.data.DataLoader(cat_dog_set,
                                               batch_size=args.batch_size,
                                               shuffle=True,
-                                              num_workers=2)
+                                              num_workers=1)
 
     # initialize generator net
-    generator = Generator(ngpu).to(device)
+    generator = Generator().to(device)
     generator.apply(weights_init)
-    print(generator)
+    # print(generator)
 
     # initialize discriminator
-    discriminator = Discriminator(ngpu).to(device)
+    discriminator = Discriminator(args.batch_size).to(device)
     discriminator.apply(weights_init)
-    print(discriminator)
+    # print(discriminator)
 
     # setup loss computation
     criterion = nn.BCELoss()
@@ -193,11 +242,12 @@ def main():
     # TODO: replace uniformly sampled noise to Gaussian distribution
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
     fixed_noise = torch.zeros(args.batch_size, gen_input_size)
+    fixed_noise = fixed_noise.view([args.batch_size, gen_w, gen_w])
     gaussian_gen = DynamicGaussianNoise(fixed_noise.shape, device,
-                                        mean=noise_mean, std=noise_std)
+                                        mean=noise_mean, std=noise_std).to(device)
     fixed_noise = gaussian_gen.forward(fixed_noise)
-    fixed_noise = fixed_noise.unsqueeze(-1)
-    fixed_noise = fixed_noise.unsqueeze(-1)
+    fixed_noise = fixed_noise.unsqueeze(1)
+    # fixed_noise = fixed_noise.unsqueeze(-1)
 
     real_label = 0
     fake_label = 1
@@ -213,47 +263,61 @@ def main():
                 discriminator.zero_grad()
                 real_cpu = data[0].to(device)
                 batch_size = real_cpu.size(0)
-                # label = torch.full((batch_size,),
-                #                    generate_soft_labels(flip_label(real_label)),
-                #                    device=device)
                 label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
 
                 output = discriminator(real_cpu)
+                # output = output.squeeze(-1)
+                # output = output.squeeze(-1)
+                # result = output.detach()
+
+                # plot it first
+                # vutils.save_image(real_cpu,
+                #                   '%s/real_samples_%s_%s.png' % (args.output, epoch, i),
+                #                   normalize=True)
+
+                # for i in range(output.shape[0]):
+                #     print(output[i, :].max(), output[i, :].argmax(), output[i, 281:285])
+
                 loss_real = criterion(output, label)
                 loss_real.backward()
                 D_x = output.mean().item()
-
-                # train fake from generator and discriminator
-                # noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
-                # TODO: replaced with gaussian noise
+                #
+                # # train fake from generator and discriminator
                 noise = torch.zeros(args.batch_size, gen_input_size)
+                noise = noise.view([args.batch_size, gen_w, gen_w])
                 noise = gaussian_gen.forward(noise)
-                noise = noise.unsqueeze(-1)
-                noise = noise.unsqueeze(-1)
+                noise = noise.unsqueeze(1)
+                # noise = noise.unsqueeze(-1)
 
                 fake = generator(noise)
                 # label.fill_(generate_soft_labels(flip_label(fake_label)))
                 label = generate_soft_labels(flip_label(fake_label), (batch_size, 1))
                 output = discriminator(fake.detach())
-                loss_fake = criterion(output, label)
-                loss_fake.backward()
-                D_G_z1 = output.mean().item()
-                d_loss = loss_fake + loss_real
-                optim_d.step()
-
+                d_loss = 0
+                D_G_z1 = 0
+                if epoch < cnn_epochs:
+                    loss_fake = criterion(output, label)
+                    loss_fake.backward()
+                    D_G_z1 = output.mean().item()
+                    d_loss = loss_fake + loss_real
+                    optim_d.step()
+                #
                 # update generator
                 # label.fill_(generate_soft_labels(real_label))
                 label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
-                output = discriminator(fake)
-                loss_generator = criterion(output, label)
-                loss_generator.backward()
-                D_G_z2 = output.mean().item()
-                optim_g.step()
+                D_G_z2 = 0
+                loss_generator = torch.zeros(0.)
+                if epoch >= cnn_epochs:
+                    output = discriminator(fake)
+                    loss_generator = criterion(output, label)
+                    loss_generator.backward()
+                    D_G_z2 = output.mean().item()
+                    optim_g.step()
 
                 print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                       % (epoch, args.epoch, i, len(data_loader),
                          d_loss.item(), loss_generator.item(), D_x, D_G_z1, D_G_z2))
-                if i % 10 == 0:
+                if i % 10 == 0 and epoch > cnn_epochs:
                     vutils.save_image(real_cpu,
                                       '%s/real_samples.png' % args.output,
                                       normalize=True)

@@ -2,7 +2,7 @@ import pandas
 import cv2
 import numpy as np
 import random
-from src.libs.image_process import resize_image, normalize_image
+from libs.image_process import resize_image, normalize_image
 
 
 class CatDataIterator(object):
