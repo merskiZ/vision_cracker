@@ -87,13 +87,13 @@ class Generator(nn.Module):
         self.deconv2 = nn.ConvTranspose2d(512, 256, 3, 2, 1, 1, bias=False) # 32x32x64
         self.bn2 = nn.BatchNorm2d(256)
         self.lkrl2 = nn.LeakyReLU(0.2)
-        self.deconv3 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1, bias=False) # 64x64x64
-        self.bn3 = nn.BatchNorm2d(128)
+        self.deconv3 = nn.ConvTranspose2d(256, 256, 3, 2, 1, 1, bias=False) # 64x64x64
+        self.bn3 = nn.BatchNorm2d(256)
         self.lkrl3 = nn.LeakyReLU(0.2)
-        self.deconv4 = nn.ConvTranspose2d(128, 64, 3, 2, 1, 1, bias=False) # 128x128x64
-        self.bn4 = nn.BatchNorm2d(64)
+        self.deconv4 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1, bias=False) # 128x128x64
+        self.bn4 = nn.BatchNorm2d(128)
         self.lkrl4 = nn.LeakyReLU(0.2)
-        self.deconv5 = nn.ConvTranspose2d(64, 3, 3, 2, 1, 1, bias=False)  # 256x256x3
+        self.deconv5 = nn.ConvTranspose2d(128, 3, 3, 2, 1, 1, bias=False)  # 256x256x3
         self.tanh = nn.Tanh()
         # self.sigmoid = nn.Sigmoid()
 
@@ -139,15 +139,15 @@ class Discriminator(nn.Module):
         self.lkrl2 = nn.LeakyReLU(0.2, inplace=True)
         # 32 x 32 x 128
         self.conv3 = nn.Conv2d(64, 256, 3, 2, 1, bias=False)
-        self.bn3 = nn.BatchNorm2d(128)
+        self.bn3 = nn.BatchNorm2d(256)
         self.lkrl3 = nn.LeakyReLU(0.2, inplace=True)
         # 16 x 16 x 256
         self.conv4 = nn.Conv2d(256, 512, 3, 2, 1, bias=False)
-        self.bn4 = nn.BatchNorm2d(256)
+        self.bn4 = nn.BatchNorm2d(512)
         self.lkrl4 = nn.LeakyReLU(0.2, inplace=True)
         # 8 x 8 x 512
         self.conv5 = nn.Conv2d(512, 512, 3, 2, 1, bias=False)
-        self.bn5 = nn.BatchNorm2d(256)
+        self.bn5 = nn.BatchNorm2d(512)
         self.lkrl5 = nn.LeakyReLU(0.2, inplace=True)
         # # 4 x 4 x 1024
         # nn.Conv2d(1024, 1, 4, 1, 0, bias=False),
