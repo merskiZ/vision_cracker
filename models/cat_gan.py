@@ -67,13 +67,16 @@ transform = transforms.Compose([
     # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-def weights_init(m):
+def weights_init(m, device):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
-        m.weight.data.normal_(0.0, 0.02)
+        m.weight.data.normal_(0.0, 0.02).to(device)
     elif classname.find('BatchNorm') != -1:
-        m.weight.data.normal_(1.0, 0.02)
-        m.bias.data.fill_(0)
+        m.weight.data.normal_(1.0, 0.02).to(device)
+        m.bias.data.fill_(0).to(device)
+    elif classname.find('Linear') != -1:
+        m.weight.data.normal_(0.0, 0.02).to(device)
+        m.bias.data.fill_(0).to(device)
 
 class Generator(nn.Module):
     def __init__(self):
@@ -222,22 +225,19 @@ def main():
     # initialize generator net
     if ngpu == 0:
         generator = Generator()
-        generator.apply(weights_init)
     else:
         print("generator initialized with cuda")
         generator = Generator().cuda()
-        generator.apply(weights_init).cuda()
-
+    generator.apply(weights_init, device)
     print(generator)
 
     # initialize discriminator
     if ngpu == 0:
         discriminator = Discriminator()
-        discriminator.apply(weights_init)
     else:
         print("discriminator initialized with cuda")
         discriminator = Discriminator().cuda()
-        discriminator.apply(weights_init).cuda()
+    discriminator.apply(weights_init, device)
     print(discriminator)
 
     # setup loss computation
