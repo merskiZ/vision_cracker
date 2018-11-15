@@ -240,7 +240,7 @@ def main():
 
     # TODO: replace uniformly sampled noise to Gaussian distribution
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
-    fixed_noise = torch.zeros(4, gen_input_size)
+    fixed_noise = torch.zeros(args.batch_size, gen_input_size)
     if ngpu == 0:
         gaussian_gen = DynamicGaussianNoise(fixed_noise.shape,
                                             mean=noise_mean, std=noise_std)
@@ -269,7 +269,7 @@ def main():
             # label = torch.full((batch_size,),
             #                    generate_soft_labels(flip_label(real_label)),
             #                    device=device)
-            label = generate_soft_labels(flip_label(real_label), (batch_size, 1))
+            label = generate_soft_labels(flip_label(real_label), (batch_size, 1)).to(device)
 
             output = discriminator.forward(real_cpu)
             output = output.squeeze(-1)
@@ -281,7 +281,7 @@ def main():
             # train fake from generator and discriminator
             # noise = torch.randn(batch_size, gen_input_size, 1, 1, device=device)
             # TODO: replaced with gaussian noise
-            noise = torch.zeros(args.batch_size, gen_input_size)
+            noise = Variable(torch.zeros(args.batch_size, gen_input_size))
             noise = gaussian_gen.forward(noise)
             # noise = noise.view(args.batch_size, 8, 8)
             # noise = noise.unsqueeze(-1)
