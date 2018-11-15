@@ -34,12 +34,12 @@ def parse_arguments():
                            type=int,
                            help='')
     argparser.add_argument('-bn', '--batch_size',
-                           default=16,
+                           default=32,
                            type=int,
                            help='')
     argparser.add_argument('-lr',
                            '--learning_rate',
-                           default=1e-3,
+                           default=5e-5,
                            type=float,
                            help='controls the learning rate for the optimizer')
     argparser.add_argument('--beta1',
@@ -240,7 +240,7 @@ def main():
 
     # TODO: replace uniformly sampled noise to Gaussian distribution
     # fixed_noise = torch.randn(args.batch_size, gen_input_size, 1, 1, device=device)
-    fixed_noise = torch.zeros(args.batch_size, gen_input_size)
+    fixed_noise = torch.zeros(4, gen_input_size)
     if ngpu == 0:
         gaussian_gen = DynamicGaussianNoise(fixed_noise.shape,
                                             mean=noise_mean, std=noise_std)
