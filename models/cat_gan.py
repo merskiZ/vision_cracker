@@ -222,17 +222,22 @@ def main():
     # initialize generator net
     if ngpu == 0:
         generator = Generator()
+        generator.apply(weights_init)
     else:
-        generator = Generator().cuda(device=device)
-    generator.apply(weights_init)
+        print("generator initialized with cuda")
+        generator = Generator().cuda()
+        generator.apply(weights_init).cuda()
+
     print(generator)
 
     # initialize discriminator
     if ngpu == 0:
         discriminator = Discriminator()
+        discriminator.apply(weights_init)
     else:
-        discriminator = Discriminator().cuda(device=device)
-    discriminator.apply(weights_init)
+        print("discriminator initialized with cuda")
+        discriminator = Discriminator().cuda()
+        discriminator.apply(weights_init).cuda()
     print(discriminator)
 
     # setup loss computation
