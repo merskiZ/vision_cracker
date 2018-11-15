@@ -13,7 +13,7 @@ class DynamicGaussianNoise(nn.Module):
     # TODO: add device selection support
     def __init__(self, shape, mean=0., std=.05):
         super(DynamicGaussianNoise, self).__init__()
-        self.noise = Variable(torch.zeros(shape[0], shape[1]))
+        self.noise = Variable(torch.zeros(shape[0], shape[1])).cuda()
         self.std = std
         self.mean = mean
 
@@ -21,5 +21,5 @@ class DynamicGaussianNoise(nn.Module):
         if not self.training:
             return x
 
-        self.noise.data.normal_(self.mean, std=self.std)
+        self.noise.data.normal_(self.mean, std=self.std).cuda()
         return x + self.noise
