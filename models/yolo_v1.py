@@ -38,6 +38,7 @@ implementation of YOLO:
 import os
 import torch
 import torch.nn as nn
+from torch.autograd import Variable
 from torch.utils.data.dataloader import DataLoader
 import torch.optim as optim
 from torchvision.transforms import transforms, ToTensor
@@ -83,7 +84,7 @@ class Yolo(nn.Module):
 
     def forward(self, x):
         x = nn.LeakyReLU(self.conv_layer_1(x), 0.1)
-        x = self.maxpool_1
+        x = self.maxpool_1(x)
         x = nn.LeakyReLU(self.conv_layer_2(x), 0.1)
         x = self.maxpool_2(x)
         x = nn.LeakyReLU(self.conv_layer_3(x), 0.1)
@@ -157,7 +158,12 @@ def train_step(data_loader, optimizer,
     else:
         box_regress.train()
     for i, (image, label) in enumerate(data_loader):
-        image_tensor = preprocess(image)
+        if use_cuda:
+            image_tensor = Variable(preprocess(image)).cuda()
+            label = Variable(label).cuda()
+        else:
+            image_tensor = Variable(preprocess(image))
+            label = Variable(label)
 
         yolo_out = yolo.forward(image_tensor)
         optimizer.zero_grad()
@@ -188,7 +194,7 @@ def train(input_folder,
           beta1,
           epochs,
           checkpoint=None,
-          ckpt_save_epoch=10,
+          ckpt_save_epoch=100,
           pretrain=False,
           pretrain_epochs=1000):
     # get data generator ready
