@@ -19,11 +19,11 @@ class XMLReader(object):
             if item.tag == 'size':
                 for info in item:
                     if info.tag == 'width':
-                        result['image_width'] = info.text
+                        result['image_width'] = int(info.text)
                     if info.tag == 'height':
-                        result['image_height'] = info.text
+                        result['image_height'] = int(info.text)
                     if info.tag == 'depth':
-                        result['image_channel'] = info.text
+                        result['image_channel'] = int(info.text)
 
             # get object class name and bounding box annotation
             if item.tag == 'object':

@@ -36,19 +36,77 @@ implementation of YOLO:
 └────────────┴────────────────────────┴───────────────────┘
 """
 import os
+import argparse
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.utils.data.dataloader import DataLoader
 import torch.optim as optim
-from torchvision.transforms import transforms, ToTensor
+from torchvision.transforms import transforms, ToTensor, Resize
 from data.datasets import VOCDataset
 
 use_cuda = torch.cuda.is_available()
 
+
+def parse_arguments():
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('-if', '--input_folder',
+                           type=str,
+                           required=True,
+                           help='The input image folder')
+    argparser.add_argument('-am', '--annotation_map',
+                           type=str,
+                           required=True,
+                           help='The annotation map to map')
+    argparser.add_argument('-l', '--log_dir',
+                           type=str,
+                           default='/tmp/vision_cracker_log',
+                           help='the place to save checkpoint and ')
+    argparser.add_argument('--batch_size',
+                           default=1,
+                           type=int,
+                           help='The number of batch sizes that is extracted from  dataset')
+    argparser.add_argument('--resize_shape',
+                           default=448,
+                           type=int,
+                           help='The input shape after resizing')
+    argparser.add_argument('--num_classes',
+                           default=20,
+                           type=int,
+                           help='The number of classes that in the dataset')
+    argparser.add_argument('--num_boxes',
+                           default=2,
+                           type=int,
+                           help='The number of boxes for each grid prediction')
+    argparser.add_argument('--learning_rate',
+                           default=0.0001,
+                           type=float,
+                           help='The learning rate for the adam optimizer')
+    argparser.add_argument('--beta1',
+                           default=0.999,
+                           type=float,
+                           help='The beta value to control the momentum in adam optimizer')
+    argparser.add_argument('--lambda_coord',
+                           default=5.,
+                           type=float,
+                           help='lambda weight for the coordinate loss')
+    argparser.add_argument('--lambda_noobj',
+                           default=.5,
+                           type=float,
+                           help='lambda weight for the confidence loss')
+    argparser.add_argument('--epochs',
+                           default=10000,
+                           type=int,
+                           help='The epochs we want to run for training')
+    return argparser.parse_args()
+
+
 class Yolo(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes, num_boxes):
         super(Yolo, self).__init__()
+
+        self.depth_per_cell = num_boxes * 5 + num_classes
+
         self.conv_layer_1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=7, stride=2, padding=3)
         self.maxpool_1 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.conv_layer_2 = nn.Conv2d(in_channels=64, out_channels=192, kernel_size=3, padding=1)
@@ -80,7 +138,7 @@ class Yolo(nn.Module):
 
         # fc part
         self.fc_1 = nn.Linear(7 * 7 * 1024, 4096)
-        self.fc_2 = nn.Linear(4096, 7 * 7 * 30)
+        self.fc_2 = nn.Linear(4096, 7 * 7 * self.depth_per_cell)
 
     def forward(self, x):
         x = nn.LeakyReLU(self.conv_layer_1(x), 0.1)
@@ -115,7 +173,7 @@ class Yolo(nn.Module):
         x = x.view(-1, 1)
         x = self.fc_1(x)
         x = self.fc_2(x)
-        x = x.view((7, 7, 30))
+        x = x.view((7 * 7, self.depth_per_cell))
 
         return x
 
@@ -131,38 +189,189 @@ class ClassificationNet(nn.Module):
         out = self.fc(x)
         return out
 
-class BoxRegressionNet(nn.Module):
-    def __init__(self,
-                 s,
-                 num_classes,
-                 num_boxes):
-        super(BoxRegressionNet, self).__init__()
-        self.s = s
-        self.fc_regress = nn.Linear(30, num_boxes * 5 + num_classes)
 
-    def forward(self, x):
-        grid_preds = []
-        for i in range(self.s):
-            for j in range(self.s):
-                grid_pred = self.fc_regress(x[i, j, :])
-                grid_preds.append(grid_pred)
-        return grid_preds
+def compare_existence(pred_logits, label_logits):
+    """
+    compare and get which classes are existed both in prediction and label
+    :param pred_logits:
+    :param label_logits:
+    :return:
+    """
+    indices = []
+    for i in range(len(pred_logits)):
+        if pred_logits[i] == 1 and pred_logits[i] == label_logits[i]:
+            indices.append(i)
+    return indices
+
+
+def calculate_iou(pred_box, labeled_box):
+    """
+    calculate the iou between different predict and labeled boxes
+    :param pred_box:
+    :param labeled_box:
+    :return:
+    """
+    # convert from (x, y, w, h) to (xmin, ymin, xmax, ymax)
+    p_box = [pred_box[0], pred_box[1],
+             pred_box[0] + pred_box[2],
+             pred_box[1] + pred_box[3]]
+    l_box = [labeled_box[0],
+             labeled_box[1],
+             labeled_box[0] + labeled_box[2],
+             labeled_box[1] + labeled_box[3]]
+    # calculate the intersection part
+    xmin = max(p_box[0], l_box[0])
+    ymin = max(p_box[1], l_box[1])
+    xmax = min(p_box[2], l_box[2])
+    ymax = min(p_box[3], l_box[3])
+
+    w_inter = xmax - xmin
+    h_inter = ymax - ymin
+
+    # area of predicted and labeled boxes
+    pred_area = pred_box[2] * pred_box[3]
+    label_area = labeled_box[2] * labeled_box[3]
+
+    # compute iou ratio
+    inter_area = w_inter * h_inter
+    total_area = pred_area + label_area - inter_area
+    iou = inter_area / float(total_area)
+
+    return iou
+
+
+def find_max_overlap(pred_boxes, labeled_boxes):
+    """
+    compare the predicted boxes and labeled boxes, find the pair of boxes that has most of the overlap.
+    return the
+    :param pred_boxes:
+    :param labeled_boxes:
+    :return:
+    """
+    pairs = {}
+    # find the max iou between predicted and labeled boxes
+    for i in range(pred_boxes.shape[0]):
+        max_iou = 0.
+        for j in range(labeled_boxes[0]):
+            iou = calculate_iou(pred_boxes[i], labeled_boxes[j])
+            if iou <= 0:
+              pairs[i] = -1
+            elif iou > max_iou:
+                pairs[i] = j
+                max_iou = iou
+    return pairs
+
+
+def coordinate_loss(match_pairs, pred_boxes, labeled_boxes, criterion):
+    """
+    calculate the coordinate loss based on the matching pair information
+    :param match_pairs:
+    :param pred_boxes:
+    :param labeled_boxes:
+    :param criterion:
+    :return:
+    """
+    loss = torch.zeros(1)
+    for i in range(pred_boxes.shape[0]):
+        for j in range(labeled_boxes[0]):
+            if match_pairs[i] == j:
+                # mse of x and y
+                loss += criterion(pred_boxes[i][0], labeled_boxes[j][0])\
+                        + criterion(pred_boxes[i][1], labeled_boxes[j][1])
+                # mse of sqrt of w and h
+                loss += criterion(pred_boxes[i][2] ** 0.5, labeled_boxes[j][2] ** 0.5) \
+                        + criterion(pred_boxes[i][3] ** 0.5, labeled_boxes[j][3] ** 0.5)
+    return loss
+
+
+def confidence_loss(match_pair, pred_conf, lambda_noobj, criterion):
+    """
+    calculate the confidence loss for both having object and no object scenarios
+    :param match_pair:
+    :param pred_conf:
+    :param lambda_noobj:
+    :param criterion:
+    :return:
+    """
+    loss = torch.zeros(1)
+    for i in range(pred_conf.shape[0]):
+        if match_pair[i] != -1:
+            loss += criterion(pred_conf[i], 1.)
+        else:
+            loss += lambda_noobj * criterion(pred_conf[i], 0.)
+    return loss
+
+
+def logits_loss(pred_logits, labeled_logits, criterion):
+    """
+    calculate the logits loss between pred_logits and labeleld logits
+    :param pred_logits:
+    :param labeled_logits:
+    :param criterion
+    :return:
+    """
+    return criterion(pred_logits, labeled_logits)
+
+
+def losses(output, labels,
+           lambda_coord, lambda_noobj,
+           num_boxes, num_classes):
+    """
+    calculate the losses by comparing bboxes and classes
+    :param output:
+    :param labels:
+    :return:
+    """
+    criterion = nn.MSELoss()
+    total_loss = torch.zeros(1)
+    # output shape is according to (batch, 30 x 30 tensors, tensor depth)
+    # tensor depth is (num_boxes * 5 + num_classes)
+    # here we assign the logits of prediction as [0 ... 1 (class logits, length equals to number of classes)
+    # 0.1 0.9 ... (number of boxes) x_1 y_1 w_1 h_1 ... x_n y_n w_n h_n (predict boxes according to the number of boxes)]
+    for k in range(output.shape[0]):
+        label_logits = labels[k, 0]
+        label_boxes = labels[k, 1]
+        for i in range(output.shape[1]):
+            pred_tensor = output[k, i, :].detach()
+            pred_logits = pred_tensor[: num_classes]
+            pred_confid = pred_tensor[num_classes: num_classes + num_boxes]
+            pred_boxes = pred_tensor[num_classes + num_boxes: ].view([num_boxes, -1])
+            max_pairs = find_max_overlap(pred_boxes, label_boxes)
+            # add coordinate loss
+            total_loss += lambda_coord * coordinate_loss(max_pairs, pred_boxes, label_boxes, criterion)
+            # add confidence loss
+            total_loss += confidence_loss(max_pairs, pred_confid, lambda_noobj, criterion)
+            # add class logits loss
+            if len(max_pairs.keys() > 0):
+                total_loss += logits_loss(pred_logits, label_logits, criterion)
+    return total_loss
 
 def train_step(data_loader, optimizer,
-               preprocess, yolo,
-               class_prediction, box_regress,
-               pretrain, step):
+               yolo, class_prediction,
+               pretrain, step,
+               lambda_coord, lambda_noobj,
+               num_boxes, num_classes):
+    """
+    run one epoch of training
+    :param data_loader:
+    :param optimizer:
+    :param transforms:
+    :param yolo:
+    :param class_prediction:
+    :param pretrain:
+    :param step:
+    :return:
+    """
     yolo.train()
     if pretrain:
         class_prediction.train()
-    else:
-        box_regress.train()
+
     for i, (image, label) in enumerate(data_loader):
         if use_cuda:
-            image_tensor = Variable(preprocess(image)).cuda()
+            image_tensor = Variable(image).cuda()
             label = Variable(label).cuda()
         else:
-            image_tensor = Variable(preprocess(image))
+            image_tensor = Variable(image)
             label = Variable(label)
 
         yolo_out = yolo.forward(image_tensor)
@@ -172,9 +381,11 @@ def train_step(data_loader, optimizer,
             criterion = nn.CrossEntropyLoss()
             loss = criterion(classes_pred, label)
         else:
-            box_preds = box_regress.forward(yolo_out)
-            criterion = nn.MSELoss()
-            loss = criterion()
+            # criterion = nn.MSELoss()
+            # loss = criterion()
+            loss = losses(yolo_out, label,
+                          lambda_coord, lambda_noobj,
+                          num_boxes, num_classes)
         loss.backward()
         optimizer.step()
         print("Train step {}, loss {}".format(step, loss.item()))
@@ -182,71 +393,152 @@ def train_step(data_loader, optimizer,
     return step
 
 
+def test_step(data_loader, yolo,
+              step, lambda_coord,
+              lambda_noobj, num_boxes,
+              num_classes):
+    """
+
+    :param data_loader:
+    :param yolo:
+    :param step:
+    :param lambda_coord:
+    :param lambda_noobj:
+    :param num_boxes:
+    :param num_classes:
+    :return:
+    """
+    yolo.eval()
+    for i, (image, label) in enumerate(data_loader):
+        if use_cuda:
+            image_tensor = Variable(image).cuda()
+            label = Variable(label).cuda()
+        else:
+            image_tensor = Variable(image)
+            label = Variable(label)
+
+        yolo_out = yolo.forward(image_tensor)
+        loss = losses(yolo_out, label,
+                      lambda_coord, lambda_noobj,
+                      num_boxes, num_classes)
+        print("[Testing Set] Current step {}, Total loss is {}".format(step, loss.item()))
+
+
 def train(input_folder,
-          annotation_folder,
           annotation_map,
           output_folder,
           batch_size,
+          resize_shape,
           num_classes,
           num_boxes,
-          s,
           lr,
           beta1,
           epochs,
+          lambda_coord=5,
+          lambda_noobj=0.5,
           checkpoint=None,
           ckpt_save_epoch=100,
           pretrain=False,
           pretrain_epochs=1000):
+    """
+    setup environment and variables to run training
+    :param input_folder:
+    :param annotation_map:
+    :param output_folder:
+    :param batch_size:
+    :param num_classes:
+    :param num_boxes:
+    :param lr:
+    :param beta1:
+    :param epochs:
+    :param lambda_coord:
+    :param lambda_noobj:
+    :param checkpoint:
+    :param ckpt_save_epoch:
+    :param pretrain:
+    :param pretrain_epochs:
+    :return:
+    """
+
+    # image preprocessing
+    trans = transforms.Compose([Resize(resize_shape), ToTensor()])
+
     # get data generator ready
-    dataset = VOCDataset(image_folder=input_folder,
-                         annotation_folder=annotation_folder,
-                         annotation_map_file=annotation_map)
-    data_loader = DataLoader(dataset,
-                             batch_size=batch_size,
-                             shuffle=True)
+    train_folder = os.path.join(input_folder, 'train')
+    train_dataset = VOCDataset(image_folder=train_folder,
+                               annotation_folder=train_folder,
+                               annotation_map_file=annotation_map,
+                               transforms=trans)
+    train_data_loader = DataLoader(train_dataset,
+                                   batch_size=batch_size,
+                                   shuffle=True,
+                                   drop_last=True)
+
+    test_folder = os.path.join(input_folder, 'test')
+    test_dataset = VOCDataset(image_folder=test_folder,
+                              annotation_folder=test_folder,
+                              annotation_map_file=annotation_map,
+                              transforms=trans)
+    test_data_loader = DataLoader(test_dataset,
+                                  batch_size=batch_size,
+                                  shuffle=True,
+                                  drop_last=True)
     # get nets ready
-    yolo = None
     if use_cuda:
-        yolo = Yolo().cuda()
+        yolo = Yolo(num_classes, num_boxes).cuda()
     else:
-        yolo = Yolo()
+        yolo = Yolo(num_classes, num_boxes)
 
     # if we want to pretrain the model, then we need to use a classification net
     # instead of a box regression net follows the yolo net
     class_prediction = None
-    box_regress = None
     if pretrain:
-        if use_cuda:
-            box_regress = BoxRegressionNet(s,
-                                           num_boxes=num_boxes,
-                                           num_classes=num_classes).cuda()
-        else:
-            box_regress = BoxRegressionNet(s,
-                                           num_boxes=num_boxes,
-                                           num_classes=num_classes)
-    else:
         if use_cuda:
             class_prediction = ClassificationNet(num_classes=num_classes).cuda()
         else:
             class_prediction = ClassificationNet(num_classes=num_classes)
 
-    # image preprocessing
-    preprocess = transforms.Compose([ToTensor()])
-
     # get optimizer ready
     if pretrain:
-        optimizer = optim.Adam([yolo, class_prediction], lr=lr, betas=(beta1, 0.999))
+        optimizer = optim.Adam([yolo.parameters(), class_prediction.parameters()],
+                               lr=lr,
+                               betas=(beta1, 0.999))
     else:
-        optimizer = optim.Adam([yolo, box_regress], lr=lr, betas=(beta1, 0.999))
+        optimizer = optim.Adam(yolo.parameters(), lr=lr, betas=(beta1, 0.999))
 
     step = 1
     for epoch in range(epochs):
-        step = train_step(data_loader, optimizer,
-                          preprocess, yolo,
-                          class_prediction, box_regress,
-                          pretrain, step)
+        step = train_step(train_data_loader, optimizer,
+                          yolo, class_prediction,
+                          pretrain, step,
+                          lambda_coord, lambda_noobj,
+                          num_boxes, num_classes)
+
+        test_step(test_data_loader,
+                  yolo, step,
+                  lambda_coord, lambda_noobj,
+                  num_boxes, num_classes)
 
         if epochs % ckpt_save_epoch == 0:
             torch.save(yolo.state_dict(),
                        os.path.join(output_folder,
                                     'ckpt_yolo_{}.tar'.format(step)))
+
+def main():
+    args = parse_arguments()
+    train(args.input_folder,
+          args.annotation_map,
+          args.log_dir,
+          args.batch_size,
+          args.resize_shape,
+          args.num_classes,
+          args.num_boxes,
+          args.learning_rate,
+          args.beta1,
+          args.epochs,
+          args.lambda_coord,
+          args.lambda_noobj)
+
+
+if __name__ == '__main__':
+    main()
