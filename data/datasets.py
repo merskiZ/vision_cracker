@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import Dataset
 from libs.utilities import get_file_list
 from libs.annotation_file_readers import XMLReader
+from data.data_utilities import PadCollate
 
 
 class VOCDataset(Dataset):
@@ -33,6 +34,8 @@ class VOCDataset(Dataset):
         self.annotations = sorted(self.annotations)
         self.list_ids = list(range(len(self.images)))
 
+        # self.pad_collate = PadCollate(dim=0)
+
     def __len__(self):
         return len(self.list_ids)
 
@@ -54,26 +57,20 @@ class VOCDataset(Dataset):
         bboxes = [[x[0], x[1], x[2] - x[0], x[3] - x[1]] for x in bboxes]
 
         classes = [self.annotation_mapping[x] for x in label_dict['object_name']]
-        classes_indices = [0] * len(classes)
+        classes_indices = [0] * self.num_classes
 
         # assign the corresponding class logit to 1
         for i in range(len(classes)):
             classes_indices[i] = 1
 
-        # combine logits and bounding boxes together
-        # labels = []
-        # for i in range(len(bboxes)):
-        #     label = classes_indices[i] + bboxes[i]
-        #     labels.append(label)
-        # return labels
-        return classes_indices, bboxes
+        return torch.FloatTensor(classes_indices), torch.FloatTensor(bboxes)
 
     def __getitem__(self, index):
         image = Image.open(open(self.images[index], 'rb'))
         image = self.transforms(image)
         labels_dict = self.xml_reader.read_xml_file(self.annotations[index])
-        labels = self.organize_labels(labels_dict)
-        return image, torch.FloatTensor(labels[0]), torch.FloatTensor(labels[1])
+        classes_indices, bboxes = self.organize_labels(labels_dict)
+        return image, classes_indices, bboxes
 
 class ImageNetDataset(Dataset):
     def __init__(self, image_folder,

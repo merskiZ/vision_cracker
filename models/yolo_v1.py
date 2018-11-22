@@ -44,6 +44,7 @@ from torch.utils.data.dataloader import DataLoader
 import torch.optim as optim
 from torchvision.transforms import transforms, ToTensor, Resize
 from data.datasets import VOCDataset
+from data.data_utilities import PadCollate
 
 use_cuda = torch.cuda.is_available()
 
@@ -63,7 +64,7 @@ def parse_arguments():
                            default='/tmp/vision_cracker_log',
                            help='the place to save checkpoint and ')
     argparser.add_argument('--batch_size',
-                           default=1,
+                           default=2,
                            type=int,
                            help='The number of batch sizes that is extracted from  dataset')
     argparser.add_argument('--resize_shape',
@@ -102,78 +103,103 @@ def parse_arguments():
 
 
 class Yolo(nn.Module):
-    def __init__(self, num_classes, num_boxes):
+    def __init__(self, num_classes, num_boxes, batch_size):
         super(Yolo, self).__init__()
 
+        self.batch_size = batch_size
         self.depth_per_cell = num_boxes * 5 + num_classes
 
         self.conv_layer_1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=7, stride=2, padding=3)
+        self.leaky_relu_1 = nn.LeakyReLU(0.1)
         self.maxpool_1 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.conv_layer_2 = nn.Conv2d(in_channels=64, out_channels=192, kernel_size=3, padding=1)
+        self.leaky_relu_2 = nn.LeakyReLU(0.1)
         self.maxpool_2 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.conv_layer_3 = nn.Conv2d(in_channels=192, out_channels=128, kernel_size=1)
+        self.leaky_relu_3 = nn.LeakyReLU(0.1)
         self.conv_layer_4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1)
+        self.leaky_relu_4 = nn.LeakyReLU(0.1)
         self.conv_layer_5 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=1)
+        self.leaky_relu_5 = nn.LeakyReLU(0.1)
         self.conv_layer_6 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=1)
+        self.leaky_relu_6 = nn.LeakyReLU(0.1)
         self.maxpool_3 = nn.MaxPool2d(stride=2, kernel_size=2)
         self.conv_layer_7 = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1)
+        self.leaky_relu_7 = nn.LeakyReLU(0.1)
         self.conv_layer_8 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, padding=1)
+        self.leaky_relu_8 = nn.LeakyReLU(0.1)
         self.conv_layer_9 = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1)
+        self.leaky_relu_9 = nn.LeakyReLU(0.1)
         self.conv_layer_10 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, padding=1)
+        self.leaky_relu_10 = nn.LeakyReLU(0.1)
         self.conv_layer_11 = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1)
+        self.leaky_relu_11 = nn.LeakyReLU(0.1)
         self.conv_layer_12 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, padding=1)
+        self.leaky_relu_12 = nn.LeakyReLU(0.1)
         self.conv_layer_13 = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1)
+        self.leaky_relu_13 = nn.LeakyReLU(0.1)
         self.conv_layer_14 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, padding=1)
+        self.leaky_relu_14 = nn.LeakyReLU(0.1)
         self.conv_layer_15 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=1)
+        self.leaky_relu_15 = nn.LeakyReLU(0.1)
         self.conv_layer_16 = nn.Conv2d(in_channels=512, out_channels=1024, kernel_size=3, padding=1)
+        self.leaky_relu_16 = nn.LeakyReLU(0.1)
         self.maxpool_4 = nn.MaxPool2d(stride=2, kernel_size=2)
         self.conv_layer_17 = nn.Conv2d(in_channels=1024, out_channels=512, kernel_size=1)
+        self.leaky_relu_17 = nn.LeakyReLU(0.1)
         self.conv_layer_18 = nn.Conv2d(in_channels=512, out_channels=1024, kernel_size=3, padding=1)
+        self.leaky_relu_18 = nn.LeakyReLU(0.1)
         self.conv_layer_19 = nn.Conv2d(in_channels=1024, out_channels=512, kernel_size=1)
+        self.leaky_relu_19 = nn.LeakyReLU(0.1)
         self.conv_layer_20 = nn.Conv2d(in_channels=512, out_channels=1024, kernel_size=3, padding=1)
+        self.leaky_relu_20 = nn.LeakyReLU(0.1)
         self.conv_layer_21 = nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=3, padding=1)
+        self.leaky_relu_21 = nn.LeakyReLU(0.1)
         self.conv_layer_22 = nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=3, padding=1, stride=2)
+        self.leaky_relu_22 = nn.LeakyReLU(0.1)
         self.conv_layer_23 = nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=3, padding=1)
+        self.leaky_relu_23 = nn.LeakyReLU(0.1)
         self.conv_layer_24 = nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=3, padding=1)
+        self.leaky_relu_24 = nn.LeakyReLU(0.1)
 
         # fc part
         self.fc_1 = nn.Linear(7 * 7 * 1024, 4096)
         self.fc_2 = nn.Linear(4096, 7 * 7 * self.depth_per_cell)
 
     def forward(self, x):
-        x = nn.LeakyReLU(self.conv_layer_1(x), 0.1)
+        x = self.leaky_relu_1(self.conv_layer_1(x))
         x = self.maxpool_1(x)
-        x = nn.LeakyReLU(self.conv_layer_2(x), 0.1)
+        x = self.leaky_relu_2(self.conv_layer_2(x))
         x = self.maxpool_2(x)
-        x = nn.LeakyReLU(self.conv_layer_3(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_4(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_5(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_6(x), 0.1)
+        x = self.leaky_relu_3(self.conv_layer_3(x))
+        x = self.leaky_relu_4(self.conv_layer_4(x))
+        x = self.leaky_relu_5(self.conv_layer_5(x))
+        x = self.leaky_relu_6(self.conv_layer_6(x))
         x = self.maxpool_3(x)
-        x = nn.LeakyReLU(self.conv_layer_7(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_8(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_9(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_10(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_11(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_12(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_13(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_14(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_15(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_16(x), 0.1)
+        x = self.leaky_relu_7(self.conv_layer_7(x))
+        x = self.leaky_relu_8(self.conv_layer_8(x))
+        x = self.leaky_relu_9(self.conv_layer_9(x))
+        x = self.leaky_relu_10(self.conv_layer_10(x))
+        x = self.leaky_relu_11(self.conv_layer_11(x))
+        x = self.leaky_relu_12(self.conv_layer_12(x))
+        x = self.leaky_relu_13(self.conv_layer_13(x))
+        x = self.leaky_relu_14(self.conv_layer_14(x))
+        x = self.leaky_relu_15(self.conv_layer_15(x))
+        x = self.leaky_relu_16(self.conv_layer_16(x))
         x = self.maxpool_4(x)
-        x = nn.LeakyReLU(self.conv_layer_17(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_18(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_19(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_20(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_21(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_22(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_23(x), 0.1)
-        x = nn.LeakyReLU(self.conv_layer_24(x), 0.1)
+        x = self.leaky_relu_17(self.conv_layer_17(x))
+        x = self.leaky_relu_18(self.conv_layer_18(x))
+        x = self.leaky_relu_19(self.conv_layer_19(x))
+        x = self.leaky_relu_20(self.conv_layer_20(x))
+        x = self.leaky_relu_21(self.conv_layer_21(x))
+        x = self.leaky_relu_22(self.conv_layer_22(x))
+        x = self.leaky_relu_23(self.conv_layer_23(x))
+        x = self.leaky_relu_24(self.conv_layer_24(x))
 
-        x = x.view(-1, 1)
+        x = x.view(self.batch_size, -1)
         x = self.fc_1(x)
         x = self.fc_2(x)
-        x = x.view((7 * 7, self.depth_per_cell))
+        x = x.view((self.batch_size, 7 * 7, self.depth_per_cell))
 
         return x
 
@@ -252,7 +278,9 @@ def find_max_overlap(pred_boxes, labeled_boxes):
     # find the max iou between predicted and labeled boxes
     for i in range(pred_boxes.shape[0]):
         max_iou = 0.
-        for j in range(labeled_boxes[0]):
+        for j in range(labeled_boxes.shape[0]):
+            if all([x == 0.0 for x in labeled_boxes[j].data.tolist()]):
+                continue
             iou = calculate_iou(pred_boxes[i], labeled_boxes[j])
             if iou <= 0:
               pairs[i] = -1
@@ -273,14 +301,15 @@ def coordinate_loss(match_pairs, pred_boxes, labeled_boxes, criterion):
     """
     loss = torch.zeros(1)
     for i in range(pred_boxes.shape[0]):
-        for j in range(labeled_boxes[0]):
+        for j in range(labeled_boxes.shape[0]):
             if match_pairs[i] == j:
                 # mse of x and y
                 loss += criterion(pred_boxes[i][0], labeled_boxes[j][0])\
                         + criterion(pred_boxes[i][1], labeled_boxes[j][1])
                 # mse of sqrt of w and h
-                loss += criterion(pred_boxes[i][2] ** 0.5, labeled_boxes[j][2] ** 0.5) \
-                        + criterion(pred_boxes[i][3] ** 0.5, labeled_boxes[j][3] ** 0.5)
+                # pred_boxes[i] = torch.clamp(pred_boxes[i], min=0)
+                loss += criterion(pred_boxes[i][2] ** 1, labeled_boxes[j][2] ** 1) \
+                        + criterion(pred_boxes[i][3] ** 1, labeled_boxes[j][3] ** 1)
     return loss
 
 
@@ -296,9 +325,9 @@ def confidence_loss(match_pair, pred_conf, lambda_noobj, criterion):
     loss = torch.zeros(1)
     for i in range(pred_conf.shape[0]):
         if match_pair[i] != -1:
-            loss += criterion(pred_conf[i], 1.)
+            loss += criterion(pred_conf[i], torch.ones(1))
         else:
-            loss += lambda_noobj * criterion(pred_conf[i], 0.)
+            loss += lambda_noobj * criterion(pred_conf[i], torch.zeros(1))
     return loss
 
 
@@ -313,7 +342,7 @@ def logits_loss(pred_logits, labeled_logits, criterion):
     return criterion(pred_logits, labeled_logits)
 
 
-def losses(output, labels,
+def losses(output, logits, bboxes,
            lambda_coord, lambda_noobj,
            num_boxes, num_classes):
     """
@@ -323,27 +352,41 @@ def losses(output, labels,
     :return:
     """
     criterion = nn.MSELoss()
-    total_loss = torch.zeros(1)
+    total_loss = Variable(torch.zeros(1))
     # output shape is according to (batch, 30 x 30 tensors, tensor depth)
     # tensor depth is (num_boxes * 5 + num_classes)
     # here we assign the logits of prediction as [0 ... 1 (class logits, length equals to number of classes)
     # 0.1 0.9 ... (number of boxes) x_1 y_1 w_1 h_1 ... x_n y_n w_n h_n (predict boxes according to the number of boxes)]
     for k in range(output.shape[0]):
-        label_logits = labels[k, 0]
-        label_boxes = labels[k, 1]
+        label_logits = logits[k]
+        label_boxes = bboxes[k]
         for i in range(output.shape[1]):
-            pred_tensor = output[k, i, :].detach()
+            pred_tensor = output[k, i, :]
             pred_logits = pred_tensor[: num_classes]
             pred_confid = pred_tensor[num_classes: num_classes + num_boxes]
             pred_boxes = pred_tensor[num_classes + num_boxes: ].view([num_boxes, -1])
             max_pairs = find_max_overlap(pred_boxes, label_boxes)
+            if len(max_pairs.keys()) == 0:
+                continue
+                
             # add coordinate loss
-            total_loss += lambda_coord * coordinate_loss(max_pairs, pred_boxes, label_boxes, criterion)
+            coord_loss = lambda_coord * coordinate_loss(max_pairs, pred_boxes, label_boxes, criterion)
+            total_loss += coord_loss
+
             # add confidence loss
-            total_loss += confidence_loss(max_pairs, pred_confid, lambda_noobj, criterion)
+            conf_loss = confidence_loss(max_pairs, pred_confid, lambda_noobj, criterion)
+            total_loss += conf_loss
             # add class logits loss
-            if len(max_pairs.keys() > 0):
-                total_loss += logits_loss(pred_logits, label_logits, criterion)
+            if len(max_pairs.keys()) > 0:
+                class_logits_loss = logits_loss(pred_logits, label_logits, criterion)
+                total_loss += class_logits_loss
+            print("[DEBUG] coordinates loss: {}, "
+                  "confidence loss: {}, "
+                  "logits loss: {}, "
+                  "match pairs {}".format(coord_loss.data.tolist(),
+                                          conf_loss.data.tolist(),
+                                          class_logits_loss.data.tolist(),
+                                          max_pairs))
     return total_loss
 
 def train_step(data_loader, optimizer,
@@ -366,24 +409,26 @@ def train_step(data_loader, optimizer,
     if pretrain:
         class_prediction.train()
 
-    for i, (image, label) in enumerate(data_loader):
+    for image, logits, bboxes in data_loader:
         if use_cuda:
             image_tensor = Variable(image).cuda()
-            label = Variable(label).cuda()
+            logits = Variable(logits).cuda()
+            bboxes = Variable(bboxes).cuda()
         else:
             image_tensor = Variable(image)
-            label = Variable(label)
+            logits = Variable(logits)
+            bboxes = Variable(bboxes)
 
         yolo_out = yolo.forward(image_tensor)
         optimizer.zero_grad()
         if pretrain:
             classes_pred = class_prediction.forward(yolo_out)
             criterion = nn.CrossEntropyLoss()
-            loss = criterion(classes_pred, label)
+            loss = criterion(classes_pred, logits)
         else:
             # criterion = nn.MSELoss()
             # loss = criterion()
-            loss = losses(yolo_out, label,
+            loss = losses(yolo_out, logits, bboxes,
                           lambda_coord, lambda_noobj,
                           num_boxes, num_classes)
         loss.backward()
@@ -409,16 +454,18 @@ def test_step(data_loader, yolo,
     :return:
     """
     yolo.eval()
-    for i, (image, label) in enumerate(data_loader):
+    for i, (image, logits, bboxes) in enumerate(data_loader):
         if use_cuda:
             image_tensor = Variable(image).cuda()
-            label = Variable(label).cuda()
+            logits = Variable(logits).cuda()
+            bboxes = Variable(bboxes).cuda()
         else:
             image_tensor = Variable(image)
-            label = Variable(label)
+            logits = Variable(logits)
+            bboxes = Variable(bboxes)
 
         yolo_out = yolo.forward(image_tensor)
-        loss = losses(yolo_out, label,
+        loss = losses(yolo_out, logits, bboxes,
                       lambda_coord, lambda_noobj,
                       num_boxes, num_classes)
         print("[Testing Set] Current step {}, Total loss is {}".format(step, loss.item()))
@@ -461,9 +508,10 @@ def train(input_folder,
     """
 
     # image preprocessing
-    trans = transforms.Compose([Resize(resize_shape), ToTensor()])
+    trans = transforms.Compose([Resize((resize_shape, resize_shape)), ToTensor()])
 
     # get data generator ready
+    pad_collate = PadCollate()
     train_folder = os.path.join(input_folder, 'train')
     train_dataset = VOCDataset(image_folder=train_folder,
                                annotation_folder=train_folder,
@@ -472,7 +520,9 @@ def train(input_folder,
     train_data_loader = DataLoader(train_dataset,
                                    batch_size=batch_size,
                                    shuffle=True,
-                                   drop_last=True)
+                                   drop_last=True,
+                                   collate_fn=pad_collate
+                                   )
 
     test_folder = os.path.join(input_folder, 'test')
     test_dataset = VOCDataset(image_folder=test_folder,
@@ -482,12 +532,13 @@ def train(input_folder,
     test_data_loader = DataLoader(test_dataset,
                                   batch_size=batch_size,
                                   shuffle=True,
-                                  drop_last=True)
+                                  drop_last=True,
+                                  collate_fn=pad_collate)
     # get nets ready
     if use_cuda:
-        yolo = Yolo(num_classes, num_boxes).cuda()
+        yolo = Yolo(num_classes, num_boxes, batch_size).cuda()
     else:
-        yolo = Yolo(num_classes, num_boxes)
+        yolo = Yolo(num_classes, num_boxes, batch_size)
 
     # if we want to pretrain the model, then we need to use a classification net
     # instead of a box regression net follows the yolo net
