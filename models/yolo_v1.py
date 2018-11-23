@@ -43,11 +43,14 @@ from torch.autograd import Variable
 from torch.utils.data.dataloader import DataLoader
 import torch.optim as optim
 from torchvision.transforms import transforms, ToTensor, Resize
+
+from tensorboardX import SummaryWriter
+
 from data.datasets import VOCDataset
 from data.data_utilities import PadCollate
 
 use_cuda = torch.cuda.is_available()
-
+writer = SummaryWriter(log_dir='/tmp/log_dir')
 
 def parse_arguments():
     argparser = argparse.ArgumentParser()
@@ -344,7 +347,8 @@ def logits_loss(pred_logits, labeled_logits, criterion):
 
 def losses(output, logits, bboxes,
            lambda_coord, lambda_noobj,
-           num_boxes, num_classes):
+           num_boxes, num_classes,
+           step, name='train'):
     """
     calculate the losses by comparing bboxes and classes
     :param output:
@@ -353,6 +357,9 @@ def losses(output, logits, bboxes,
     """
     criterion = nn.MSELoss()
     total_loss = Variable(torch.zeros(1))
+    coord_loss = Variable(torch.zeros(1))
+    conf_loss = Variable(torch.zeros(1))
+    class_logits_loss = Variable(torch.zeros(1))
     # output shape is according to (batch, 30 x 30 tensors, tensor depth)
     # tensor depth is (num_boxes * 5 + num_classes)
     # here we assign the logits of prediction as [0 ... 1 (class logits, length equals to number of classes)
@@ -368,25 +375,33 @@ def losses(output, logits, bboxes,
             max_pairs = find_max_overlap(pred_boxes, label_boxes)
             if len(max_pairs.keys()) == 0:
                 continue
-                
+
             # add coordinate loss
-            coord_loss = lambda_coord * coordinate_loss(max_pairs, pred_boxes, label_boxes, criterion)
-            total_loss += coord_loss
+            coord_loss += lambda_coord * coordinate_loss(max_pairs, pred_boxes, label_boxes, criterion)
+            # total_loss += coord_loss
 
             # add confidence loss
-            conf_loss = confidence_loss(max_pairs, pred_confid, lambda_noobj, criterion)
-            total_loss += conf_loss
+            conf_loss += confidence_loss(max_pairs, pred_confid, lambda_noobj, criterion)
+            # total_loss += conf_loss
             # add class logits loss
             if len(max_pairs.keys()) > 0:
-                class_logits_loss = logits_loss(pred_logits, label_logits, criterion)
-                total_loss += class_logits_loss
-            print("[DEBUG] coordinates loss: {}, "
-                  "confidence loss: {}, "
-                  "logits loss: {}, "
-                  "match pairs {}".format(coord_loss.data.tolist(),
-                                          conf_loss.data.tolist(),
-                                          class_logits_loss.data.tolist(),
-                                          max_pairs))
+                class_logits_loss += logits_loss(pred_logits, label_logits, criterion)
+                # total_loss += class_logits_loss
+
+        total_loss += coord_loss + conf_loss + class_logits_loss
+        # use tensorboard to track the performance
+        writer.add_scalar('loss_{}/total_loss'.format(name), total_loss[0], step)
+        writer.add_scalar('loss_{}/coord_loss'.format(name), coord_loss[0], step)
+        writer.add_scalar('loss_{}/conf_loss'.format(name), conf_loss[0], step)
+        writer.add_scalar('loss_{}/class_loss'.format(name), class_logits_loss[0], step)
+
+            # print("[DEBUG] coordinates loss: {}, "
+            #       "confidence loss: {}, "
+            #       "logits loss: {}, "
+            #       "match pairs {}".format(coord_loss.data.tolist(),
+            #                               conf_loss.data.tolist(),
+            #                               class_logits_loss.data.tolist(),
+            #                               max_pairs))
     return total_loss
 
 def train_step(data_loader, optimizer,
@@ -430,7 +445,8 @@ def train_step(data_loader, optimizer,
             # loss = criterion()
             loss = losses(yolo_out, logits, bboxes,
                           lambda_coord, lambda_noobj,
-                          num_boxes, num_classes)
+                          num_boxes, num_classes,
+                          step, name='train')
         loss.backward()
         optimizer.step()
         print("Train step {}, loss {}".format(step, loss.item()))
@@ -467,7 +483,8 @@ def test_step(data_loader, yolo,
         yolo_out = yolo.forward(image_tensor)
         loss = losses(yolo_out, logits, bboxes,
                       lambda_coord, lambda_noobj,
-                      num_boxes, num_classes)
+                      num_boxes, num_classes,
+                      step, name='test')
         print("[Testing Set] Current step {}, Total loss is {}".format(step, loss.item()))
 
 
