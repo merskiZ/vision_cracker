@@ -394,14 +394,6 @@ def losses(output, logits, bboxes,
     writer.add_scalar('loss_{}/coord_loss'.format(name), coord_loss[0], step)
     writer.add_scalar('loss_{}/conf_loss'.format(name), conf_loss[0], step)
     writer.add_scalar('loss_{}/class_loss'.format(name), class_logits_loss[0], step)
-
-            # print("[DEBUG] coordinates loss: {}, "
-            #       "confidence loss: {}, "
-            #       "logits loss: {}, "
-            #       "match pairs {}".format(coord_loss.data.tolist(),
-            #                               conf_loss.data.tolist(),
-            #                               class_logits_loss.data.tolist(),
-            #                               max_pairs))
     return total_loss
 
 def train_step(data_loader, optimizer,
@@ -425,6 +417,7 @@ def train_step(data_loader, optimizer,
         class_prediction.train()
 
     for image, logits, bboxes in data_loader:
+
         if use_cuda:
             image_tensor = Variable(image).cuda()
             logits = Variable(logits).cuda()
@@ -501,7 +494,7 @@ def train(input_folder,
           lambda_coord=5,
           lambda_noobj=0.5,
           checkpoint=None,
-          ckpt_save_epoch=100,
+          ckpt_save_epoch=2,
           pretrain=False,
           pretrain_epochs=1000):
     """

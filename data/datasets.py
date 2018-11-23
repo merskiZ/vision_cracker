@@ -60,7 +60,7 @@ class VOCDataset(Dataset):
         classes_indices = [0] * self.num_classes
 
         # assign the corresponding class logit to 1
-        for i in range(len(classes)):
+        for i in classes:
             classes_indices[i] = 1
 
         return torch.FloatTensor(classes_indices), torch.FloatTensor(bboxes)
