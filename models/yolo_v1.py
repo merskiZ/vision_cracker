@@ -389,11 +389,11 @@ def losses(output, logits, bboxes,
                 # total_loss += class_logits_loss
 
         total_loss += coord_loss + conf_loss + class_logits_loss
-        # use tensorboard to track the performance
-        writer.add_scalar('loss_{}/total_loss'.format(name), total_loss[0], step)
-        writer.add_scalar('loss_{}/coord_loss'.format(name), coord_loss[0], step)
-        writer.add_scalar('loss_{}/conf_loss'.format(name), conf_loss[0], step)
-        writer.add_scalar('loss_{}/class_loss'.format(name), class_logits_loss[0], step)
+    # use tensorboard to track the performance
+    writer.add_scalar('loss_{}/total_loss'.format(name), total_loss[0], step)
+    writer.add_scalar('loss_{}/coord_loss'.format(name), coord_loss[0], step)
+    writer.add_scalar('loss_{}/conf_loss'.format(name), conf_loss[0], step)
+    writer.add_scalar('loss_{}/class_loss'.format(name), class_logits_loss[0], step)
 
             # print("[DEBUG] coordinates loss: {}, "
             #       "confidence loss: {}, "
