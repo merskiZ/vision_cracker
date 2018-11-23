@@ -302,7 +302,7 @@ def coordinate_loss(match_pairs, pred_boxes, labeled_boxes, criterion):
     :param criterion:
     :return:
     """
-    loss = torch.zeros(1)
+    loss = Variable(torch.zeros(1)).cuda() if use_cuda else torch.zeros(1)
     for i in range(pred_boxes.shape[0]):
         for j in range(labeled_boxes.shape[0]):
             if match_pairs[i] == j:
@@ -358,10 +358,16 @@ def losses(output, logits, bboxes,
     :return:
     """
     criterion = nn.MSELoss()
-    total_loss = Variable(torch.zeros(1))
-    coord_loss = Variable(torch.zeros(1))
-    conf_loss = Variable(torch.zeros(1))
-    class_logits_loss = Variable(torch.zeros(1))
+    if use_cuda:
+        total_loss = Variable(torch.zeros(1)).cuda()
+        coord_loss = Variable(torch.zeros(1)).cuda()
+        conf_loss = Variable(torch.zeros(1)).cuda()
+        class_logits_loss = Variable(torch.zeros(1)).cuda()
+    else:
+        total_loss = Variable(torch.zeros(1))
+        coord_loss = Variable(torch.zeros(1))
+        conf_loss = Variable(torch.zeros(1))
+        class_logits_loss = Variable(torch.zeros(1))
     # output shape is according to (batch, 30 x 30 tensors, tensor depth)
     # tensor depth is (num_boxes * 5 + num_classes)
     # here we assign the logits of prediction as [0 ... 1 (class logits, length equals to number of classes)
