@@ -325,12 +325,14 @@ def confidence_loss(match_pair, pred_conf, lambda_noobj, criterion):
     :param criterion:
     :return:
     """
-    loss = torch.zeros(1)
+    loss = Variable(torch.zeros(1)).cuda() if use_cuda else torch.zeros(1)
+    fake_ones = Variable(torch.ones(1)).cuda() if use_cuda else torch.ones(1)
+    fake_zeros = Variable(torch.zeros(1)).cuda() if use_cuda else torch.zeros(1)
     for i in range(pred_conf.shape[0]):
         if match_pair[i] != -1:
-            loss += criterion(pred_conf[i], torch.ones(1))
+            loss += criterion(pred_conf[i], fake_ones)
         else:
-            loss += lambda_noobj * criterion(pred_conf[i], torch.zeros(1))
+            loss += lambda_noobj * criterion(pred_conf[i], fake_zeros)
     return loss
 
 
