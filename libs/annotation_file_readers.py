@@ -34,13 +34,13 @@ class XMLReader(object):
                         bbox = {}
                         for bbox_info in info:
                             if bbox_info.tag == 'xmin':
-                                bbox['xmin'] = int(bbox_info.text)
+                                bbox['xmin'] = int(float(bbox_info.text))
                             if bbox_info.tag == 'ymin':
-                                bbox['ymin'] = int(bbox_info.text)
+                                bbox['ymin'] = int(float(bbox_info.text))
                             if bbox_info.tag == 'xmax':
-                                bbox['xmax'] = int(bbox_info.text)
+                                bbox['xmax'] = int(float(bbox_info.text))
                             if bbox_info.tag == 'ymax':
-                                bbox['ymax'] = int(bbox_info.text)
+                                bbox['ymax'] = int(float(bbox_info.text))
                         result['bbox'].append([bbox['xmin'], bbox['ymin'], bbox['xmax'], bbox['ymax']])
         return result
 
